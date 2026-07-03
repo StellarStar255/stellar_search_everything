@@ -53,16 +53,27 @@ class FileSearchApp:
             # Tk silently substitutes missing fonts, so Font(...).actual() can't
             # detect availability — check against the real installed family list
             import tkinter.font as tkFont
-            available_families = {f.lower() for f in tkFont.families(root)}
-            default_font_family = "Sans"  # Default fallback
+            all_families = list(tkFont.families(root))
+            available_families = {f.lower(): f for f in all_families}
+            default_font_family = None
             for font_name in fallback_fonts:
                 if font_name.lower() in available_families:
-                    default_font_family = font_name
-                    print(f"Using font: {font_name}")
+                    default_font_family = available_families[font_name.lower()]
                     break
-            if default_font_family not in cjk_fonts:
-                print("警告：未检测到中文字体，界面中文可能显示为方块。"
-                      "建议安装：sudo apt install fonts-noto-cjk")
+            if default_font_family is None or default_font_family not in cjk_fonts:
+                # 候选列表没命中中文字体时，扫描系统里任何名字带中文特征的字体兜底
+                cjk_markers = ("cjk", "wenquanyi", "wqy", "uming", "ukai",
+                               "heiti", "hei", "kai", "song", "ming", "zh")
+                cjk_found = next((f for f in all_families
+                                  if any(m in f.lower() for m in cjk_markers)), None)
+                if cjk_found:
+                    default_font_family = cjk_found
+                else:
+                    if default_font_family is None:
+                        default_font_family = "Sans"
+                    print("警告：未检测到中文字体，界面中文可能显示为方块。"
+                          "建议安装：sudo apt install fonts-noto-cjk")
+            print(f"Using font: {default_font_family}")
         elif sys.platform == "darwin":
             # macOS: 苹方字体，中英文混排显示效果更好
             default_font_family = "PingFang SC"
