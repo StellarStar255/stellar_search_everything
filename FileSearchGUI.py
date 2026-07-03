@@ -91,6 +91,10 @@ TRANSLATIONS = {
                         "pip3 install pyobjc-framework-Cocoa\n\n"
                         "安装后重启程序即可获得完整的剪贴板功能。",
         'sort_error': "排序时发生错误: {error}",
+        'cjk_font_missing': "未检测到中文字体，界面中的中文会显示为方块。\n\n"
+                            "请在终端运行以下命令安装中文字体：\n"
+                            "sudo apt install fonts-noto-cjk\n\n"
+                            "安装完成后重新启动本程序。",
     },
     'en': {
         'app_title': "File Search Tool",
@@ -157,6 +161,10 @@ TRANSLATIONS = {
                         "pip3 install pyobjc-framework-Cocoa\n\n"
                         "Restart the app afterwards for full clipboard support.",
         'sort_error': "Sort error: {error}",
+        'cjk_font_missing': "No Chinese font detected; Chinese text will show as boxes.\n\n"
+                            "Install one by running in a terminal:\n"
+                            "sudo apt install fonts-noto-cjk\n\n"
+                            "Then restart this application.",
     },
 }
 
@@ -209,7 +217,9 @@ class FileSearchApp:
                 default_font_family = next(
                     (f for f in all_families if any(m in f.lower() for m in markers)), None)
             if default_font_family is None:
-                # 没有可用的中文字体：退回高质量西文矢量字体，保证英文界面正常
+                # 没有可用的中文字体：退回高质量西文矢量字体，保证英文界面正常；
+                # 界面搭好后再用弹窗提醒（GUI 方式启动时终端输出用户看不到）
+                self._cjk_font_missing = True
                 print("警告：未检测到中文字体，界面中文可能显示为方块。"
                       "建议安装：sudo apt install fonts-noto-cjk")
                 default_font_family = pick(["Ubuntu", "Noto Sans", "DejaVu Sans",
@@ -664,6 +674,11 @@ class FileSearchApp:
         # 这两个平台改用状态栏的"中文/EN"按钮切换
         if sys.platform == "darwin":
             self.root.config(menu=self.menubar)
+
+        # 缺中文字体时弹窗提醒（延迟到主窗口显示后，GUI 启动时终端警告用户看不到）
+        if getattr(self, '_cjk_font_missing', False):
+            self.root.after(300, lambda: messagebox.showwarning(
+                self.t('warning'), self.t('cjk_font_missing')))
 
         # 绑定窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
