@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pyinstaller
       - name: Build .app
-        run: pyinstaller --windowed --name "Stellar Search Everything" --icon assets/AppIcon.icns --add-data "assets/icon.png:assets" FileSearchQt.py
+        run: pyinstaller --windowed --name "Stellar Search Everything" --icon assets/AppIcon.icns --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
       - name: Zip .app
         run: ditto -c -k --keepParent "dist/Stellar Search Everything.app" "StellarSearchEverything-${{ github.ref_name }}-macos-arm64.zip"
       - uses: actions/upload-artifact@v4
@@ -39,7 +39,7 @@ jobs:
       - name: Convert icns to ico
         run: python -c "from PIL import Image; Image.open('assets/AppIcon.icns').save('icon.ico', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
       - name: Build exe
-        run: pyinstaller --onefile --windowed --name StellarSearchEverything --icon icon.ico --add-data "assets/icon.png;assets" FileSearchQt.py
+        run: pyinstaller --onefile --windowed --name StellarSearchEverything --icon icon.ico --add-data "assets/icon.png;assets" --add-data "assets/check.svg;assets" FileSearchQt.py
       - name: Zip exe
         run: Compress-Archive -Path dist/StellarSearchEverything.exe -DestinationPath "StellarSearchEverything-${{ github.ref_name }}-windows-x86_64.zip"
       - uses: actions/upload-artifact@v4
@@ -60,7 +60,7 @@ jobs:
           python3 -m venv .venv
           .venv/bin/pip install -r requirements.txt pyinstaller
       - name: Build binary
-        run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything --add-data "assets/icon.png:assets" FileSearchQt.py
+        run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
       - name: Package
         run: tar -czf "StellarSearchEverything-${{ github.ref_name }}-linux-x86_64.tar.gz" -C dist stellar-search-everything
       - uses: actions/upload-artifact@v4

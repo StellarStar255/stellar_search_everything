@@ -71,6 +71,24 @@ QPushButton#accent:hover {{ background: {accent_hover}; }}
 QPushButton#accent:pressed {{ background: {accent_pressed}; }}
 QPushButton#small {{ padding: 2px 8px; }}
 QRadioButton, QCheckBox {{ spacing: 6px; }}
+QCheckBox::indicator {{
+    width: 16px; height: 16px; border: 1px solid {border};
+    border-radius: 4px; background: {entry_bg};
+}}
+QCheckBox::indicator:hover {{ border-color: {accent}; }}
+QCheckBox::indicator:checked {{
+    background: {accent}; border-color: {accent}; image: url("{check_svg}");
+}}
+QRadioButton::indicator {{
+    width: 16px; height: 16px; border: 1px solid {border};
+    border-radius: 9px; background: {entry_bg};
+}}
+QRadioButton::indicator:hover {{ border-color: {accent}; }}
+QRadioButton::indicator:checked {{
+    border-color: {accent};
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 {accent}, stop:0.55 {accent}, stop:0.7 {entry_bg}, stop:1 {entry_bg});
+}}
 QTableWidget {{
     background: {surface}; alternate-background-color: {stripe};
     color: {text}; border: 1px solid {border}; gridline-color: transparent;
@@ -95,11 +113,13 @@ QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 
 
 def build_qss():
+    # QSS 的 url() 需要正斜杠路径（Windows 上也是）
+    check_svg = resource_path(os.path.join("assets", "check.svg")).replace("\\", "/")
     return QSS_TEMPLATE.format(
         bg=BG, surface=SURFACE, entry_bg=ENTRY_BG, stripe=STRIPE_BG,
         border=BORDER, accent=ACCENT, accent_hover=ACCENT_HOVER,
         accent_pressed=ACCENT_PRESSED, text=TEXT, muted=MUTED,
-        button_bg=BUTTON_BG, button_hover=BUTTON_HOVER,
+        button_bg=BUTTON_BG, button_hover=BUTTON_HOVER, check_svg=check_svg,
     )
 
 
