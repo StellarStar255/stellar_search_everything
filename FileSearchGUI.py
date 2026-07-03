@@ -1515,22 +1515,25 @@ class FileSearchApp:
 
     def set_window_icon(self):
         """设置窗口图标"""
+        # 打包后的 macOS .app 由 Info.plist 引用的 icns 提供高清图标，
+        # iconphoto 会用位图覆盖它导致 Dock/Cmd+Tab 里变模糊，直接跳过
+        if sys.platform == "darwin" and getattr(sys, "frozen", False):
+            return
         try:
             # 图标文件路径（兼容打包后的应用）
             icon_path = resource_path(os.path.join("assets", "AppIcon.icns"))
-            
+
             if os.path.exists(icon_path):
-                # 加载图片
                 image = Image.open(icon_path)
-                # 调整图片大小为图标尺寸（建议32x32或64x64）
-                image = image.resize((32, 32), Image.Resampling.LANCZOS)
-                icon = ImageTk.PhotoImage(image)
-                
-                # 设置窗口图标
-                self.root.iconphoto(True, icon)
-                
+                # 提供多档尺寸由系统按显示场景选择，避免小图被放大导致模糊
+                icons = [
+                    ImageTk.PhotoImage(image.resize((size, size), Image.Resampling.LANCZOS))
+                    for size in (512, 256, 128, 64, 32, 16)
+                ]
+                self.root.iconphoto(True, *icons)
+
                 # 保持图片引用，防止被垃圾回收
-                self.window_icon = icon
+                self.window_icon = icons
                 print("窗口图标设置成功")
             else:
                 print(f"图标文件不存在: {icon_path}")
