@@ -638,6 +638,12 @@ class FileSearchApp:
         self.font_size_label = tk.Label(self.status_frame, text=self.t('font'), bg=self.surface_color,
                                         fg=self.muted_text, font=self.hint_font)
         self.font_size_label.pack(side=tk.RIGHT, padx=(10, 4))
+
+        # 窗口内的语言切换按钮（macOS 的菜单栏在屏幕顶部，不易发现，这里再放一个入口）
+        self.language_button = ttk.Button(self.status_frame, text=self._other_language_label(),
+                                          command=self.toggle_language,
+                                          style='DarkSmall.TButton', cursor="hand2", width=4)
+        self.language_button.pack(side=tk.RIGHT, padx=(10, 4), pady=3)
         
         # 存储搜索结果
         self.search_results = []
@@ -694,6 +700,14 @@ class FileSearchApp:
         self.apply_language()
         self.save_config()
 
+    def toggle_language(self):
+        """在中英文之间切换"""
+        self.set_language('en' if self.language == 'zh' else 'zh')
+
+    def _other_language_label(self):
+        """窗口内切换按钮显示目标语言的名称"""
+        return "EN" if self.language == 'zh' else "中文"
+
     def apply_language(self):
         """按当前语言刷新所有界面文案"""
         t = self.t
@@ -716,6 +730,7 @@ class FileSearchApp:
             if key:
                 self.context_menu.entryconfigure(index, label=t(key))
         self.menubar.entryconfigure(self.menubar.index('end'), label=t('menu_language'))
+        self.language_button.config(text=self._other_language_label())
         if not self.is_searching:
             self.status_var.set(t('ready'))
 
