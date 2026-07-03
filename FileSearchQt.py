@@ -745,6 +745,14 @@ class FileSearchWindow(QMainWindow):
 
 
 def main():
+    # Linux Wayland 会话下优先用原生 wayland 平台插件：
+    # X11/XWayland 的交互式缩放是异步的（边框先动、内容后画），
+    # 拖拽时会抖动/闪烁；wayland 下逐帧同步，无此问题。
+    # 分号列表表示 wayland 不可用时自动回退 xcb；用户可用 QT_QPA_PLATFORM 覆盖。
+    if sys.platform.startswith("linux") and "QT_QPA_PLATFORM" not in os.environ:
+        if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # 跨平台一致的基础样式，暗色 QSS 在其上生效
     app.setStyleSheet(build_qss())
