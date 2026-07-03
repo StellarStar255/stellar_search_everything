@@ -36,29 +36,33 @@ class FileSearchApp:
             # Linux: Prefer Noto Sans CJK SC for excellent Chinese character support
             # Fallback chain optimized for Chinese + English mixed text
             default_font_size = 13  # Slightly smaller for better fit
-            fallback_fonts = [
+            cjk_fonts = [
                 "Noto Sans CJK SC",      # Best for Chinese characters
-                "Noto Sans",             # Good general font
+                "Noto Sans SC",
                 "WenQuanYi Micro Hei",   # Alternative Chinese font
+                "WenQuanYi Zen Hei",
+                "AR PL UMing CN",
+                "Droid Sans Fallback",
+            ]
+            fallback_fonts = cjk_fonts + [
+                "Noto Sans",             # Good general font
                 "DejaVu Sans",           # Common on Linux
                 "Liberation Sans",       # Fallback
-                "Sans"                   # System default
             ]
 
-            # Try to use the first available font in the fallback chain
+            # Tk silently substitutes missing fonts, so Font(...).actual() can't
+            # detect availability — check against the real installed family list
             import tkinter.font as tkFont
+            available_families = {f.lower() for f in tkFont.families(root)}
             default_font_family = "Sans"  # Default fallback
             for font_name in fallback_fonts:
-                try:
-                    test_font = tkFont.Font(family=font_name, size=default_font_size)
-                    # Test if the font can actually render (sometimes fonts exist but don't work)
-                    if test_font.actual('family'):
-                        default_font_family = font_name
-                        print(f"Using font: {font_name}")
-                        break
-                except Exception as e:
-                    print(f"Font {font_name} not available: {e}")
-                    continue
+                if font_name.lower() in available_families:
+                    default_font_family = font_name
+                    print(f"Using font: {font_name}")
+                    break
+            if default_font_family not in cjk_fonts:
+                print("警告：未检测到中文字体，界面中文可能显示为方块。"
+                      "建议安装：sudo apt install fonts-noto-cjk")
         elif sys.platform == "darwin":
             # macOS: 苹方字体，中英文混排显示效果更好
             default_font_family = "PingFang SC"
