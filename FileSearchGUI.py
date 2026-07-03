@@ -94,7 +94,11 @@ TRANSLATIONS = {
         'cjk_font_missing': "未检测到中文字体，界面中的中文会显示为方块。\n\n"
                             "请在终端运行以下命令安装中文字体：\n"
                             "sudo apt install fonts-noto-cjk\n\n"
-                            "安装完成后重新启动本程序。",
+                            "安装完成后重新启动本程序。\n\n"
+                            "诊断信息：当前字体 {font}，Tk 可见字体 {count} 个。\n"
+                            "若系统已装中文字体但这里数量很少，"
+                            "说明当前 Python 的 Tk 不支持矢量字体（常见于 Anaconda），\n"
+                            "请改用系统 Python 或安装 conda-forge 的 xft 版 tk。",
     },
     'en': {
         'app_title': "File Search Tool",
@@ -164,7 +168,11 @@ TRANSLATIONS = {
         'cjk_font_missing': "No Chinese font detected; Chinese text will show as boxes.\n\n"
                             "Install one by running in a terminal:\n"
                             "sudo apt install fonts-noto-cjk\n\n"
-                            "Then restart this application.",
+                            "Then restart this application.\n\n"
+                            "Diagnostics: current font {font}, {count} fonts visible to Tk.\n"
+                            "If Chinese fonts are installed but this count is small, "
+                            "this Python's Tk lacks vector font support (common with Anaconda);\n"
+                            "use the system Python or install the xft build of tk from conda-forge.",
     },
 }
 
@@ -224,6 +232,7 @@ class FileSearchApp:
                       "建议安装：sudo apt install fonts-noto-cjk")
                 default_font_family = pick(["Ubuntu", "Noto Sans", "DejaVu Sans",
                                             "Liberation Sans"]) or "Sans"
+            self._font_diag = (default_font_family, len(all_families))
             print(f"Using font: {default_font_family}")
         elif sys.platform == "darwin":
             # macOS: 苹方字体，中英文混排显示效果更好
@@ -677,8 +686,10 @@ class FileSearchApp:
 
         # 缺中文字体时弹窗提醒（延迟到主窗口显示后，GUI 启动时终端警告用户看不到）
         if getattr(self, '_cjk_font_missing', False):
+            diag_font, diag_count = getattr(self, '_font_diag', ('?', 0))
             self.root.after(300, lambda: messagebox.showwarning(
-                self.t('warning'), self.t('cjk_font_missing')))
+                self.t('warning'),
+                self.t('cjk_font_missing', font=diag_font, count=diag_count)))
 
         # 绑定窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
