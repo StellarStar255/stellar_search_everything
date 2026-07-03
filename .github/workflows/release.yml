@@ -1,0 +1,82 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+      - name: Build .app
+        run: pyinstaller --windowed --name "Stellar Search Everything" --icon assets/AppIcon.icns FileSearchGUI.py
+      - name: Zip .app
+        run: ditto -c -k --keepParent "dist/Stellar Search Everything.app" "StellarSearchEverything-${{ github.ref_name }}-macos-arm64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: StellarSearchEverything-*.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+      - name: Convert icns to ico
+        run: python -c "from PIL import Image; Image.open('assets/AppIcon.icns').save('icon.ico', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
+      - name: Build exe
+        run: pyinstaller --onefile --windowed --name StellarSearchEverything --icon icon.ico FileSearchGUI.py
+      - name: Zip exe
+        run: Compress-Archive -Path dist/StellarSearchEverything.exe -DestinationPath "StellarSearchEverything-${{ github.ref_name }}-windows-x86_64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: StellarSearchEverything-*.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-venv
+      - name: Install dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt pyinstaller
+      - name: Build binary
+        run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything FileSearchGUI.py
+      - name: Package
+        run: tar -czf "StellarSearchEverything-${{ github.ref_name }}-linux-x86_64.tar.gz" -C dist stellar-search-everything
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: StellarSearchEverything-*.tar.gz
+
+  release:
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

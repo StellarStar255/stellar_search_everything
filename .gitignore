@@ -65,3 +65,5 @@ TraeStarterMac.py
 build/
 dist/
 *.spec
+.venv/
+venv/
