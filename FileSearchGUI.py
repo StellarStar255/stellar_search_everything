@@ -176,43 +176,44 @@ class FileSearchApp:
             # Linux: Prefer Noto Sans CJK SC for excellent Chinese character support
             # Fallback chain optimized for Chinese + English mixed text
             default_font_size = 13  # Slightly smaller for better fit
-            cjk_fonts = [
-                "Noto Sans CJK SC",      # Best for Chinese characters
-                "Noto Sans SC",
-                "WenQuanYi Micro Hei",   # Alternative Chinese font
-                "WenQuanYi Zen Hei",
-                "AR PL UMing CN",
-                "Droid Sans Fallback",
-            ]
-            fallback_fonts = cjk_fonts + [
-                "Noto Sans",             # Good general font
-                "DejaVu Sans",           # Common on Linux
-                "Liberation Sans",       # Fallback
-            ]
 
             # Tk silently substitutes missing fonts, so Font(...).actual() can't
             # detect availability — check against the real installed family list
             import tkinter.font as tkFont
             all_families = list(tkFont.families(root))
             available_families = {f.lower(): f for f in all_families}
-            default_font_family = None
-            for font_name in fallback_fonts:
-                if font_name.lower() in available_families:
-                    default_font_family = available_families[font_name.lower()]
-                    break
-            if default_font_family is None or default_font_family not in cjk_fonts:
-                # 候选列表没命中中文字体时，扫描系统里任何名字带中文特征的字体兜底
-                cjk_markers = ("cjk", "wenquanyi", "wqy", "uming", "ukai",
-                               "heiti", "hei", "kai", "song", "ming", "zh")
-                cjk_found = next((f for f in all_families
-                                  if any(m in f.lower() for m in cjk_markers)), None)
-                if cjk_found:
-                    default_font_family = cjk_found
-                else:
-                    if default_font_family is None:
-                        default_font_family = "Sans"
-                    print("警告：未检测到中文字体，界面中文可能显示为方块。"
-                          "建议安装：sudo apt install fonts-noto-cjk")
+
+            def pick(candidates):
+                for name in candidates:
+                    if name.lower() in available_families:
+                        return available_families[name.lower()]
+                return None
+
+            # 现代矢量中文字体（中英文都能渲染好）
+            cjk_candidates = [
+                "Noto Sans CJK SC",      # Best for Chinese characters
+                "Noto Sans SC",
+                "Source Han Sans SC",
+                "Source Han Sans CN",
+                "WenQuanYi Micro Hei",   # Alternative Chinese font
+                "WenQuanYi Zen Hei",
+                "AR PL UMing CN",
+                "Droid Sans Fallback",
+            ]
+            default_font_family = pick(cjk_candidates)
+            if default_font_family is None:
+                # 兜底：只按现代矢量中文字体的命名特征扫描；
+                # 不能用 song/ming/kai/hei 这类短词，会误匹配 X11 位图字体
+                # （如 "song ti"、"fangsong ti"），整套界面会变成像素点阵风格
+                markers = ("cjk", "wenquanyi", "wqy", "micro hei", "zen hei", "source han")
+                default_font_family = next(
+                    (f for f in all_families if any(m in f.lower() for m in markers)), None)
+            if default_font_family is None:
+                # 没有可用的中文字体：退回高质量西文矢量字体，保证英文界面正常
+                print("警告：未检测到中文字体，界面中文可能显示为方块。"
+                      "建议安装：sudo apt install fonts-noto-cjk")
+                default_font_family = pick(["Ubuntu", "Noto Sans", "DejaVu Sans",
+                                            "Liberation Sans"]) or "Sans"
             print(f"Using font: {default_font_family}")
         elif sys.platform == "darwin":
             # macOS: 苹方字体，中英文混排显示效果更好
@@ -658,7 +659,11 @@ class FileSearchApp:
         self.language_menu.add_radiobutton(label="English", variable=self.language_var, value="en",
                                            command=lambda: self.set_language("en"))
         self.menubar.add_cascade(label=self.t('menu_language'), menu=self.language_menu)
-        self.root.config(menu=self.menubar)
+        # 只在 macOS 上挂菜单栏（显示在屏幕顶部系统栏）；
+        # Linux/Windows 上 Tk 菜单栏会在窗口内占一条且不跟随暗色主题，
+        # 这两个平台改用状态栏的"中文/EN"按钮切换
+        if sys.platform == "darwin":
+            self.root.config(menu=self.menubar)
 
         # 绑定窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
