@@ -53,6 +53,9 @@ GetNewPython.py
 *.bmp
 *.tiff
 
+# 应用图标资源需要进仓库（CI 打包依赖）
+!assets/icon.png
+
 
 *.mp4
 *.env
