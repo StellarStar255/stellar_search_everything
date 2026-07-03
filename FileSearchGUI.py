@@ -24,10 +24,150 @@ def resource_path(relative_path):
         return os.path.join(os.path.dirname(__file__), relative_path)
 
 
+# 界面文案（中/英），通过菜单栏"语言/Language"切换
+TRANSLATIONS = {
+    'zh': {
+        'app_title': "文件搜索工具",
+        'menu_language': "语言",
+        'search_folder': "搜索文件夹",
+        'browse': "浏览…",
+        'search_keywords': "搜索关键词",
+        'search': "搜索",
+        'cancel': "取消",
+        'hint': "支持多关键词，用空格分隔；双击输入框可选择历史记录",
+        'by_name': "按文件名",
+        'by_content': "按内容",
+        'match_all': "包含所有关键词",
+        'match_any': "包含任一关键词",
+        'compact': "紧凑显示",
+        'results': "搜索结果",
+        'open_file': "打开文件",
+        'open_containing': "打开所在文件夹",
+        'copy_path': "复制路径",
+        'copy_item': "复制文件/文件夹",
+        'ready': "就绪",
+        'font': "字体",
+        'col_name': "文件名",
+        'col_path': "路径",
+        'col_size': "大小",
+        'col_date': "修改日期",
+        'font_size_status': "字体大小: {size}",
+        'error': "错误",
+        'warning': "警告",
+        'notice': "提示",
+        'invalid_folder': "无效的文件夹路径: {path}",
+        'enter_keywords': "请输入搜索关键词",
+        'enter_valid_keywords': "请输入有效的搜索关键词",
+        'searching': "正在搜索关键词: {keywords}...",
+        'searching_progress': "正在搜索... 已找到 {count} 个结果",
+        'mode_all': "所有关键词",
+        'mode_any': "任一关键词",
+        'search_done': "搜索完成，找到 {count} 个包含{mode}的结果",
+        'search_error_status': "搜索出错: {error}",
+        'search_error_msg': "搜索过程中发生错误: {error}",
+        'search_cancelled': "搜索已取消",
+        'cannot_open_file': "无法打开文件: {error}",
+        'cannot_open_folder': "无法打开文件夹: {error}",
+        'copied_path': "已复制路径: {path}",
+        'copied_paths': "已复制 {count} 条路径",
+        'cannot_copy_path': "无法复制路径: {error}",
+        'no_valid_paths': "没有有效的文件路径",
+        'copied_file': "✅ 已复制文件: {name}",
+        'copied_folder': "✅ 已复制文件夹: {name}",
+        'copied_mixed': "✅ 已复制 {files} 个文件和 {folders} 个文件夹",
+        'copied_files': "✅ 已复制 {files} 个文件",
+        'copied_folders': "✅ 已复制 {folders} 个文件夹",
+        'copied_path_text': "已复制路径（文本格式）",
+        'copy_failed_status': "❌ 复制失败: {error}",
+        'copy_failed': "❌ 复制失败",
+        'copy_error': "复制操作发生错误: {error}",
+        'pyobjc_ask': "无法将文件复制到剪贴板（可能需要安装 pyobjc）。\n"
+                      "已复制文件路径为文本。\n\n"
+                      "是否要查看安装 pyobjc 的说明？",
+        'pyobjc_howto_title': "安装说明",
+        'pyobjc_howto': "在终端中运行以下命令安装 pyobjc：\n\n"
+                        "pip install pyobjc-framework-Cocoa\n\n"
+                        "或使用 pip3:\n"
+                        "pip3 install pyobjc-framework-Cocoa\n\n"
+                        "安装后重启程序即可获得完整的剪贴板功能。",
+        'sort_error': "排序时发生错误: {error}",
+    },
+    'en': {
+        'app_title': "File Search Tool",
+        'menu_language': "Language",
+        'search_folder': "Search Folder",
+        'browse': "Browse…",
+        'search_keywords': "Keywords",
+        'search': "Search",
+        'cancel': "Cancel",
+        'hint': "Separate multiple keywords with spaces; double-click a field for history",
+        'by_name': "By Name",
+        'by_content': "By Content",
+        'match_all': "Match All Keywords",
+        'match_any': "Match Any Keyword",
+        'compact': "Compact View",
+        'results': "Results",
+        'open_file': "Open File",
+        'open_containing': "Open Containing Folder",
+        'copy_path': "Copy Path",
+        'copy_item': "Copy File/Folder",
+        'ready': "Ready",
+        'font': "Font",
+        'col_name': "Name",
+        'col_path': "Path",
+        'col_size': "Size",
+        'col_date': "Modified",
+        'font_size_status': "Font size: {size}",
+        'error': "Error",
+        'warning': "Warning",
+        'notice': "Notice",
+        'invalid_folder': "Invalid folder path: {path}",
+        'enter_keywords': "Please enter search keywords",
+        'enter_valid_keywords': "Please enter valid search keywords",
+        'searching': "Searching for: {keywords}...",
+        'searching_progress': "Searching... {count} results found",
+        'mode_all': "all keywords",
+        'mode_any': "any keyword",
+        'search_done': "Search complete: {count} results matching {mode}",
+        'search_error_status': "Search error: {error}",
+        'search_error_msg': "An error occurred during search: {error}",
+        'search_cancelled': "Search cancelled",
+        'cannot_open_file': "Cannot open file: {error}",
+        'cannot_open_folder': "Cannot open folder: {error}",
+        'copied_path': "Copied path: {path}",
+        'copied_paths': "Copied {count} paths",
+        'cannot_copy_path': "Cannot copy path: {error}",
+        'no_valid_paths': "No valid file paths",
+        'copied_file': "✅ Copied file: {name}",
+        'copied_folder': "✅ Copied folder: {name}",
+        'copied_mixed': "✅ Copied {files} files and {folders} folders",
+        'copied_files': "✅ Copied {files} files",
+        'copied_folders': "✅ Copied {folders} folders",
+        'copied_path_text': "Copied paths as plain text",
+        'copy_failed_status': "❌ Copy failed: {error}",
+        'copy_failed': "❌ Copy failed",
+        'copy_error': "Copy operation error: {error}",
+        'pyobjc_ask': "Cannot copy files to the clipboard (pyobjc may be required).\n"
+                      "File paths were copied as plain text instead.\n\n"
+                      "Show instructions for installing pyobjc?",
+        'pyobjc_howto_title': "Installation",
+        'pyobjc_howto': "Run the following command in a terminal to install pyobjc:\n\n"
+                        "pip install pyobjc-framework-Cocoa\n\n"
+                        "or with pip3:\n"
+                        "pip3 install pyobjc-framework-Cocoa\n\n"
+                        "Restart the app afterwards for full clipboard support.",
+        'sort_error': "Sort error: {error}",
+    },
+}
+
+
 class FileSearchApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("文件搜索工具")
+        self.config_file = os.path.join(os.path.expanduser("~"), ".file_search_config.json")
+        # 语言需要在创建任何控件之前确定
+        self.language = self._load_language()
+        self.root.title(self.t('app_title'))
         self.root.geometry("920x640")
         self.root.minsize(780, 520)
 
@@ -101,9 +241,8 @@ class FileSearchApp:
         # 设置窗口图标
         self.set_window_icon()
         
-        # 配置文件路径
-        self.config_file = os.path.join(os.path.expanduser("~"), ".file_search_config.json")
-        
+        # 配置文件路径已在 __init__ 开头设置（语言加载需要先读配置）
+
         # 搜索历史记录（最多10条）
         self.search_history = []
         
@@ -142,7 +281,7 @@ class FileSearchApp:
         self.form_frame.columnconfigure(1, weight=1)
 
         # 文件夹选择
-        self.folder_label = tk.Label(self.form_frame, text="搜索文件夹", bg=self.surface_color, fg=self.text_color, font=self.control_font)
+        self.folder_label = tk.Label(self.form_frame, text=self.t('search_folder'), bg=self.surface_color, fg=self.text_color, font=self.control_font)
         self.folder_label.grid(row=0, column=0, sticky="e", padx=(2, 10), pady=4)
 
         self.folder_var = tk.StringVar()
@@ -270,12 +409,12 @@ class FileSearchApp:
         # 加载文件夹历史
         self.load_folder_history()
 
-        self.browse_button = ttk.Button(self.form_frame, text="浏览…", command=self.browse_folder,
+        self.browse_button = ttk.Button(self.form_frame, text=self.t('browse'), command=self.browse_folder,
                                         style='Dark.TButton', cursor="hand2")
         self.browse_button.grid(row=0, column=2, padx=(10, 2), pady=4, sticky="ew")
 
         # 搜索关键词
-        self.search_label = tk.Label(self.form_frame, text="搜索关键词", bg=self.surface_color, fg=self.text_color, font=self.control_font)
+        self.search_label = tk.Label(self.form_frame, text=self.t('search_keywords'), bg=self.surface_color, fg=self.text_color, font=self.control_font)
         self.search_label.grid(row=1, column=0, sticky="e", padx=(2, 10), pady=4)
 
         self.search_var = tk.StringVar()
@@ -297,12 +436,12 @@ class FileSearchApp:
         self.load_search_history()
 
         # 搜索按钮（与浏览按钮同列对齐；搜索状态由按钮文字和状态栏提示）
-        self.search_button = ttk.Button(self.form_frame, text="搜索", command=self.search_files,
+        self.search_button = ttk.Button(self.form_frame, text=self.t('search'), command=self.search_files,
                                         style='Accent.TButton', cursor="hand2")
         self.search_button.grid(row=1, column=2, padx=(10, 2), pady=4, sticky="ew")
 
         # 添加提示标签
-        self.hint_label = tk.Label(self.form_frame, text="支持多关键词，用空格分隔；双击输入框可选择历史记录",
+        self.hint_label = tk.Label(self.form_frame, text=self.t('hint'),
                                  bg=self.surface_color, fg=self.muted_text, font=self.hint_font)
         self.hint_label.grid(row=2, column=1, sticky="w", pady=(0, 2))
         
@@ -314,11 +453,11 @@ class FileSearchApp:
         self.search_option = tk.StringVar()
         self.search_option.set("name")
 
-        self.name_radio = ttk.Radiobutton(self.option_frame, text="按文件名", variable=self.search_option,
+        self.name_radio = ttk.Radiobutton(self.option_frame, text=self.t('by_name'), variable=self.search_option,
                                           value="name", style='Dark.TRadiobutton', cursor="hand2")
         self.name_radio.pack(side=tk.LEFT, padx=(2, 10))
 
-        self.content_radio = ttk.Radiobutton(self.option_frame, text="按内容", variable=self.search_option,
+        self.content_radio = ttk.Radiobutton(self.option_frame, text=self.t('by_content'), variable=self.search_option,
                                              value="content", style='Dark.TRadiobutton', cursor="hand2")
         self.content_radio.pack(side=tk.LEFT, padx=(0, 10))
 
@@ -329,11 +468,11 @@ class FileSearchApp:
         self.match_mode = tk.StringVar()
         self.match_mode.set("all")
 
-        self.all_radio = ttk.Radiobutton(self.option_frame, text="包含所有关键词", variable=self.match_mode,
+        self.all_radio = ttk.Radiobutton(self.option_frame, text=self.t('match_all'), variable=self.match_mode,
                                          value="all", style='Dark.TRadiobutton', cursor="hand2")
         self.all_radio.pack(side=tk.LEFT, padx=(10, 10))
 
-        self.any_radio = ttk.Radiobutton(self.option_frame, text="包含任一关键词", variable=self.match_mode,
+        self.any_radio = ttk.Radiobutton(self.option_frame, text=self.t('match_any'), variable=self.match_mode,
                                          value="any", style='Dark.TRadiobutton', cursor="hand2")
         self.any_radio.pack(side=tk.LEFT, padx=(0, 10))
 
@@ -341,7 +480,7 @@ class FileSearchApp:
         self.option_separator2.pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=4)
 
         # 添加紧凑显示选项 checkbox
-        self.compact_check = ttk.Checkbutton(self.option_frame, text="紧凑显示", variable=self.compact_display,
+        self.compact_check = ttk.Checkbutton(self.option_frame, text=self.t('compact'), variable=self.compact_display,
                                              style='Dark.TCheckbutton', cursor="hand2",
                                              command=self.toggle_compact_display)
         self.compact_check.pack(side=tk.LEFT, padx=(10, 5))
@@ -361,7 +500,7 @@ class FileSearchApp:
         self.result_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 6))
 
         # 结果标签
-        self.result_label = tk.Label(self.result_frame, text="搜索结果", bg=self.bg_color, anchor="w", fg=self.text_color, font=self.control_font)
+        self.result_label = tk.Label(self.result_frame, text=self.t('results'), bg=self.bg_color, anchor="w", fg=self.text_color, font=self.control_font)
         self.result_label.pack(fill=tk.X, pady=(0, 4))
 
         # Configure Treeview style with explicit font for better rendering on Linux
@@ -401,17 +540,21 @@ class FileSearchApp:
         self.sort_reverse = False
 
         # 创建表格显示结果（包含隐藏的完整路径列）
+        # 列 ID 固定用中文（内部标识，不随语言变化），标题文字通过 t() 翻译
         self.all_columns = ("文件名", "路径", "完整路径", "大小", "修改日期")
         self.visible_columns = ("文件名", "路径", "大小", "修改日期")
+        self.column_keys = {"文件名": 'col_name', "路径": 'col_path',
+                            "大小": 'col_size', "修改日期": 'col_date'}
         self.result_tree = ttk.Treeview(self.result_frame, columns=self.all_columns, show="headings",
                                         style='Dark.Treeview', selectmode="extended", height=8)
 
         # 隐藏"完整路径"列（宽度设为0）
         self.result_tree.column("完整路径", width=0, stretch=False)
-        
+
         # 设置列标题并绑定点击事件（只对可见列）
         for col in self.visible_columns:
-            self.result_tree.heading(col, text=col, command=lambda c=col: self.sort_by_column(c))
+            self.result_tree.heading(col, text=self.t(self.column_keys[col]),
+                                     command=lambda c=col: self.sort_by_column(c))
             
         # 设置列宽（总宽控制在默认窗口内，避免一打开就出现横向滚动条）
         self.result_tree.column("文件名", width=250)
@@ -464,15 +607,15 @@ class FileSearchApp:
         self.context_menu = tk.Menu(self.root, tearoff=0, bg=self.surface_color, fg=self.text_color,
                                    activebackground=self.accent_color, activeforeground="#ffffff",
                                    font=self.default_font)
-        self.context_menu.add_command(label="打开文件", command=self.open_selected_file)
-        self.context_menu.add_command(label="打开所在文件夹", command=self.open_containing_folder)
+        self.context_menu.add_command(label=self.t('open_file'), command=self.open_selected_file)
+        self.context_menu.add_command(label=self.t('open_containing'), command=self.open_containing_folder)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="复制路径", command=self.copy_file_path)
-        self.context_menu.add_command(label="复制文件/文件夹", command=self.copy_file_or_folder)
+        self.context_menu.add_command(label=self.t('copy_path'), command=self.copy_file_path)
+        self.context_menu.add_command(label=self.t('copy_item'), command=self.copy_file_or_folder)
         
         # 状态栏
         self.status_var = tk.StringVar()
-        self.status_var.set("就绪")
+        self.status_var.set(self.t('ready'))
         # 状态栏容器（左侧状态信息，右侧字体大小调节）
         # before=result_frame 让状态栏优先于结果区分配空间，避免窗口不够高时被挤掉
         self.status_frame = tk.Frame(self.main_frame, bg=self.surface_color)
@@ -492,12 +635,24 @@ class FileSearchApp:
                                                style='DarkSmall.TButton', cursor="hand2", width=2)
         self.decrease_font_button.pack(side=tk.RIGHT, padx=2, pady=3)
 
-        self.font_size_label = tk.Label(self.status_frame, text="字体", bg=self.surface_color,
+        self.font_size_label = tk.Label(self.status_frame, text=self.t('font'), bg=self.surface_color,
                                         fg=self.muted_text, font=self.hint_font)
         self.font_size_label.pack(side=tk.RIGHT, padx=(10, 4))
         
         # 存储搜索结果
         self.search_results = []
+
+        # 菜单栏：语言切换（中文/English）
+        self.language_var = tk.StringVar(value=self.language)
+        self.menubar = tk.Menu(self.root, tearoff=0)
+        self.language_menu = tk.Menu(self.menubar, tearoff=0, bg=self.surface_color, fg=self.text_color,
+                                     activebackground=self.accent_color, activeforeground="#ffffff")
+        self.language_menu.add_radiobutton(label="中文", variable=self.language_var, value="zh",
+                                           command=lambda: self.set_language("zh"))
+        self.language_menu.add_radiobutton(label="English", variable=self.language_var, value="en",
+                                           command=lambda: self.set_language("en"))
+        self.menubar.add_cascade(label=self.t('menu_language'), menu=self.language_menu)
+        self.root.config(menu=self.menubar)
 
         # 绑定窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -514,6 +669,56 @@ class FileSearchApp:
         if self.current_font_size != self.base_font_size:
             self.update_all_fonts(self.current_font_size)
     
+    def t(self, key, **kwargs):
+        """按当前语言取界面文案，支持 {name} 形式的格式化参数"""
+        text = TRANSLATIONS.get(self.language, TRANSLATIONS['zh']).get(key)
+        if text is None:
+            text = TRANSLATIONS['zh'].get(key, key)
+        return text.format(**kwargs) if kwargs else text
+
+    def _load_language(self):
+        """在创建控件前从配置文件读取界面语言"""
+        try:
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                lang = json.load(f).get('language', 'zh')
+                return lang if lang in TRANSLATIONS else 'zh'
+        except Exception:
+            return 'zh'
+
+    def set_language(self, lang):
+        """切换界面语言并保存到配置"""
+        if lang not in TRANSLATIONS or lang == self.language:
+            return
+        self.language = lang
+        self.language_var.set(lang)
+        self.apply_language()
+        self.save_config()
+
+    def apply_language(self):
+        """按当前语言刷新所有界面文案"""
+        t = self.t
+        self.root.title(t('app_title'))
+        self.folder_label.config(text=t('search_folder'))
+        self.browse_button.config(text=t('browse'))
+        self.search_label.config(text=t('search_keywords'))
+        self.search_button.config(text=t('cancel') if self.is_searching else t('search'))
+        self.hint_label.config(text=t('hint'))
+        self.name_radio.config(text=t('by_name'))
+        self.content_radio.config(text=t('by_content'))
+        self.all_radio.config(text=t('match_all'))
+        self.any_radio.config(text=t('match_any'))
+        self.compact_check.config(text=t('compact'))
+        self.result_label.config(text=t('results'))
+        self.font_size_label.config(text=t('font'))
+        for col, key in self.column_keys.items():
+            self.result_tree.heading(col, text=t(key))
+        for index, key in enumerate(('open_file', 'open_containing', None, 'copy_path', 'copy_item')):
+            if key:
+                self.context_menu.entryconfigure(index, label=t(key))
+        self.menubar.entryconfigure(self.menubar.index('end'), label=t('menu_language'))
+        if not self.is_searching:
+            self.status_var.set(t('ready'))
+
     def load_config(self):
         """加载配置文件"""
         try:
@@ -613,7 +818,8 @@ class FileSearchApp:
                 'search_history': search_history,
                 'folder_history': folder_history,
                 'compact_display': compact_display,
-                'font_size': font_size
+                'font_size': font_size,
+                'language': self.language
             }
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
@@ -788,16 +994,16 @@ class FileSearchApp:
         new_size = min(32, self.current_font_size + 1)  # 最大32
         if new_size != self.current_font_size:
             self.update_all_fonts(new_size)
-            self.status_var.set(f"字体大小: {new_size}")
-            self.root.after(2000, lambda: self.status_var.set("就绪"))
+            self.status_var.set(self.t('font_size_status', size=new_size))
+            self.root.after(2000, lambda: self.status_var.set(self.t('ready')))
 
     def decrease_font_size(self):
         """减小字体"""
         new_size = max(8, self.current_font_size - 1)  # 最小8
         if new_size != self.current_font_size:
             self.update_all_fonts(new_size)
-            self.status_var.set(f"字体大小: {new_size}")
-            self.root.after(2000, lambda: self.status_var.set("就绪"))
+            self.status_var.set(self.t('font_size_status', size=new_size))
+            self.root.after(2000, lambda: self.status_var.set(self.t('ready')))
 
     def on_closing(self):
         """窗口关闭时的处理"""
@@ -877,23 +1083,23 @@ class FileSearchApp:
             match_mode = self.match_mode.get()
             
             if not os.path.isdir(search_path):
-                self.root.after(0, lambda: messagebox.showerror("错误", f"无效的文件夹路径: {search_path}"))
+                self.root.after(0, lambda: messagebox.showerror(self.t('error'), self.t('invalid_folder', path=search_path)))
                 return
             
             if not search_text:
-                self.root.after(0, lambda: messagebox.showwarning("警告", "请输入搜索关键词"))
+                self.root.after(0, lambda: messagebox.showwarning(self.t('warning'), self.t('enter_keywords')))
                 return
             
             # 解析搜索关键词
             keywords = self.parse_search_terms(search_text)
             if not keywords:
-                self.root.after(0, lambda: messagebox.showwarning("警告", "请输入有效的搜索关键词"))
+                self.root.after(0, lambda: messagebox.showwarning(self.t('warning'), self.t('enter_valid_keywords')))
                 return
             
             # 预先计算小写关键词，避免重复转换
             keywords_lower = [kw.lower() for kw in keywords]
             
-            self.root.after(0, lambda: self.status_var.set(f"正在搜索关键词: {', '.join(keywords)}..."))
+            self.root.after(0, lambda: self.status_var.set(self.t('searching', keywords=', '.join(keywords))))
             
             count = 0
             
@@ -980,7 +1186,7 @@ class FileSearchApp:
                                     flush_batch()
                                     last_update_time = current_time
                                     # 更新状态显示
-                                    self.root.after(0, lambda c=count: self.status_var.set(f"正在搜索... 已找到 {c} 个结果"))
+                                    self.root.after(0, lambda c=count: self.status_var.set(self.t('searching_progress', count=c)))
                                     
                             except (PermissionError, OSError):
                                 continue
@@ -1002,24 +1208,24 @@ class FileSearchApp:
             flush_batch()
             
             if self.is_searching:  # 只有在没有被取消的情况下才显示完成消息
-                mode_text = "所有关键词" if match_mode == "all" else "任一关键词"
-                self.root.after(0, lambda: self.status_var.set(f"搜索完成，找到 {count} 个包含{mode_text}的结果"))
+                mode_text = self.t('mode_all') if match_mode == "all" else self.t('mode_any')
+                self.root.after(0, lambda: self.status_var.set(self.t('search_done', count=count, mode=mode_text)))
         
         except Exception as e:
-            self.root.after(0, lambda: self.status_var.set(f"搜索出错: {str(e)}"))
-            self.root.after(0, lambda: messagebox.showerror("错误", f"搜索过程中发生错误: {str(e)}"))
+            self.root.after(0, lambda: self.status_var.set(self.t('search_error_status', error=str(e))))
+            self.root.after(0, lambda: messagebox.showerror(self.t('error'), self.t('search_error_msg', error=str(e))))
         
         finally:
             # 搜索完成，重置状态
             self.is_searching = False
-            self.root.after(0, lambda: self.search_button.config(text="搜索", command=self.search_files))
+            self.root.after(0, lambda: self.search_button.config(text=self.t('search'), command=self.search_files))
     
     def search_files(self):
         if self.is_searching:
             # 如果正在搜索，则取消搜索
             self.is_searching = False
-            self.search_button.config(text="搜索", command=self.search_files)
-            self.status_var.set("搜索已取消")
+            self.search_button.config(text=self.t('search'), command=self.search_files)
+            self.status_var.set(self.t('search_cancelled'))
             return
         
         # 获取搜索关键词并添加到历史记录
@@ -1034,7 +1240,7 @@ class FileSearchApp:
 
         # 开始新的搜索
         self.is_searching = True
-        self.search_button.config(text="取消", command=self.search_files)
+        self.search_button.config(text=self.t('cancel'), command=self.search_files)
 
         # 在后台线程中执行搜索
         self.search_thread = threading.Thread(target=self.search_files_threaded, daemon=True)
@@ -1136,7 +1342,7 @@ class FileSearchApp:
             else:  # Windows
                 os.startfile(file_path)
         except Exception as e:
-            messagebox.showerror("错误", f"无法打开文件: {str(e)}")
+            messagebox.showerror(self.t('error'), self.t('cannot_open_file', error=str(e)))
     
     def open_containing_folder(self):
         """打开文件所在的文件夹"""
@@ -1166,7 +1372,7 @@ class FileSearchApp:
                 else:
                     os.startfile(file_path)
         except Exception as e:
-            messagebox.showerror("错误", f"无法打开文件夹: {str(e)}")
+            messagebox.showerror(self.t('error'), self.t('cannot_open_folder', error=str(e)))
     
     def copy_file_path(self):
         """复制文件路径到剪贴板（支持多选）"""
@@ -1182,13 +1388,13 @@ class FileSearchApp:
             self.root.clipboard_clear()
             self.root.clipboard_append(text_to_copy)
             if len(paths) == 1:
-                self.status_var.set(f"已复制路径: {paths[0]}")
+                self.status_var.set(self.t('copied_path', path=paths[0]))
             else:
-                self.status_var.set(f"已复制 {len(paths)} 条路径")
+                self.status_var.set(self.t('copied_paths', count=len(paths)))
             # 添加定时器，3秒后清除状态信息
-            self.root.after(3000, lambda: self.status_var.set("就绪"))
+            self.root.after(3000, lambda: self.status_var.set(self.t('ready')))
         except Exception as e:
-            messagebox.showerror("错误", f"无法复制路径: {str(e)}")
+            messagebox.showerror(self.t('error'), self.t('cannot_copy_path', error=str(e)))
     
     def copy_file_or_folder(self):
         """复制选中的文件或文件夹到剪贴板（支持多选，Finder 可直接粘贴）"""
@@ -1209,7 +1415,7 @@ class FileSearchApp:
                     print(f"文件不存在: {path}")
             
             if not valid_paths:
-                messagebox.showwarning("警告", "没有有效的文件路径")
+                messagebox.showwarning(self.t('warning'), self.t('no_valid_paths'))
                 return
             
             success = False
@@ -1378,25 +1584,13 @@ class FileSearchApp:
                     print("✅ 已复制路径文本")
                     
                     # 提示用户
-                    response = messagebox.askyesno(
-                        "提示",
-                        "无法将文件复制到剪贴板（可能需要安装 pyobjc）。\n"
-                        "已复制文件路径为文本。\n\n"
-                        "是否要查看安装 pyobjc 的说明？"
-                    )
-                    
+                    response = messagebox.askyesno(self.t('notice'), self.t('pyobjc_ask'))
+
                     if response:
-                        messagebox.showinfo(
-                            "安装说明",
-                            "在终端中运行以下命令安装 pyobjc：\n\n"
-                            "pip install pyobjc-framework-Cocoa\n\n"
-                            "或使用 pip3:\n"
-                            "pip3 install pyobjc-framework-Cocoa\n\n"
-                            "安装后重启程序即可获得完整的剪贴板功能。"
-                        )
+                        messagebox.showinfo(self.t('pyobjc_howto_title'), self.t('pyobjc_howto'))
                     
                     success = True
-                    error_msg = "已复制路径（文本格式）"
+                    error_msg = self.t('copied_path_text')
                     
                 except Exception as e:
                     error_msg = str(e)
@@ -1407,31 +1601,31 @@ class FileSearchApp:
                 if len(valid_paths) == 1:
                     base = os.path.basename(valid_paths[0])
                     if os.path.isfile(valid_paths[0]):
-                        self.status_var.set(f"✅ 已复制文件: {base}")
+                        self.status_var.set(self.t('copied_file', name=base))
                     else:
-                        self.status_var.set(f"✅ 已复制文件夹: {base}")
+                        self.status_var.set(self.t('copied_folder', name=base))
                 else:
                     file_count = sum(1 for p in valid_paths if os.path.isfile(p))
                     folder_count = len(valid_paths) - file_count
                     if file_count > 0 and folder_count > 0:
-                        self.status_var.set(f"✅ 已复制 {file_count} 个文件和 {folder_count} 个文件夹")
+                        self.status_var.set(self.t('copied_mixed', files=file_count, folders=folder_count))
                     elif file_count > 0:
-                        self.status_var.set(f"✅ 已复制 {file_count} 个文件")
+                        self.status_var.set(self.t('copied_files', files=file_count))
                     else:
-                        self.status_var.set(f"✅ 已复制 {folder_count} 个文件夹")
+                        self.status_var.set(self.t('copied_folders', folders=folder_count))
             elif success and error_msg:
                 self.status_var.set(f"⚠️ {error_msg}")
             else:
-                self.status_var.set(f"❌ 复制失败: {error_msg}")
+                self.status_var.set(self.t('copy_failed_status', error=error_msg))
             
             # 5秒后清空状态
-            self.root.after(5000, lambda: self.status_var.set("就绪"))
+            self.root.after(5000, lambda: self.status_var.set(self.t('ready')))
             
         except Exception as e:
-            error_message = f"复制操作发生错误: {str(e)}"
+            error_message = self.t('copy_error', error=str(e))
             print(error_message)
-            self.status_var.set("❌ 复制失败")
-            messagebox.showerror("错误", error_message)
+            self.status_var.set(self.t('copy_failed'))
+            messagebox.showerror(self.t('error'), error_message)
         
     def open_file(self, event):
         # 检查是否有选中的项
@@ -1451,7 +1645,7 @@ class FileSearchApp:
             else:  # Windows
                 os.startfile(file_path)
         except Exception as e:
-            messagebox.showerror("错误", f"无法打开文件: {str(e)}")
+            messagebox.showerror(self.t('error'), self.t('cannot_open_file', error=str(e)))
 
     def _round_rect_image(self, fill, outline=None, radius=8, size=26):
         """生成圆角矩形图片（4x 超采样抗锯齿，透明圆角外区域）"""
@@ -1620,11 +1814,12 @@ class FileSearchApp:
 
             # 更新列标题显示排序指示器（只更新可见列）
             for col in self.visible_columns:
+                heading_text = self.t(self.column_keys[col])
                 if col == column:
                     indicator = " ↓" if self.sort_reverse else " ↑"
-                    self.result_tree.heading(col, text=col + indicator)
+                    self.result_tree.heading(col, text=heading_text + indicator)
                 else:
-                    self.result_tree.heading(col, text=col)
+                    self.result_tree.heading(col, text=heading_text)
             
             # 重新排列树视图中的项目，并重新分配斑马纹
             # （用已取到的 values 判断文件夹，避免每行再读一次 tags）
@@ -1640,7 +1835,7 @@ class FileSearchApp:
                 
         except Exception as e:
             print(f"排序时出错: {str(e)}")
-            messagebox.showerror("错误", f"排序时发生错误: {str(e)}")
+            messagebox.showerror(self.t('error'), self.t('sort_error', error=str(e)))
 
 
 
