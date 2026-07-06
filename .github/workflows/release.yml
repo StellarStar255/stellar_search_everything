@@ -12,8 +12,8 @@ jobs:
   build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install dependencies
@@ -22,7 +22,7 @@ jobs:
         run: pyinstaller --windowed --name "Stellar Search Everything" --icon assets/AppIcon.icns --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
       - name: Zip .app
         run: ditto -c -k --keepParent "dist/Stellar Search Everything.app" "StellarSearchEverything-${{ github.ref_name }}-macos-arm64.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: StellarSearchEverything-*.zip
@@ -30,8 +30,8 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install dependencies
@@ -42,7 +42,7 @@ jobs:
         run: pyinstaller --onefile --windowed --name StellarSearchEverything --icon icon.ico --add-data "assets/icon.png;assets" --add-data "assets/check.svg;assets" FileSearchQt.py
       - name: Zip exe
         run: Compress-Archive -Path dist/StellarSearchEverything.exe -DestinationPath "StellarSearchEverything-${{ github.ref_name }}-windows-x86_64.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: StellarSearchEverything-*.zip
@@ -50,7 +50,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -63,7 +63,7 @@ jobs:
         run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
       - name: Package
         run: tar -czf "StellarSearchEverything-${{ github.ref_name }}-linux-x86_64.tar.gz" -C dist stellar-search-everything
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: StellarSearchEverything-*.tar.gz
@@ -72,8 +72,8 @@ jobs:
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -87,7 +87,7 @@ jobs:
           if ! grep -q '[^[:space:]]' release_notes.md; then
             echo "::warning::CHANGELOG.md 中没有找到 [$version] 小节，将使用自动生成的说明"
           fi
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           body_path: release_notes.md
