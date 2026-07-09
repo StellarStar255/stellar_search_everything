@@ -774,6 +774,10 @@ def main():
             os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
 
     app = QApplication(sys.argv)
+    # 应用级图标：macOS Dock / 任务栏用的是这个，窗口级 setWindowIcon 管不到
+    icon_path = resource_path(os.path.join("assets", "icon.png"))
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     app.setStyle("Fusion")  # 跨平台一致的基础样式，暗色 QSS 在其上生效
     app.setStyleSheet(build_qss())
     window = FileSearchWindow()
