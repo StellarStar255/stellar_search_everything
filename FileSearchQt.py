@@ -15,19 +15,19 @@ import threading
 import urllib.request
 
 from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
-                            QAbstractTableModel, QModelIndex, QTimer)
+                            QAbstractTableModel, QModelIndex, QTimer, QEvent)
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
                            QShortcut, QColor, QBrush)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
     QRadioButton, QCheckBox, QHBoxLayout, QVBoxLayout, QGridLayout,
     QTableView, QMenu, QFileDialog, QMessageBox,
-    QHeaderView, QFrame, QAbstractItemView, QButtonGroup,
+    QHeaderView, QFrame, QAbstractItemView, QButtonGroup, QSystemTrayIcon,
 )
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -45,6 +45,17 @@ def platform_asset_suffix():
     if sys.platform.startswith("win"):
         return "-setup.exe"
     return ".deb"
+
+
+def https_context():
+    """打包后的 Python 没有系统 CA 证书（SSL: CERTIFICATE_VERIFY_FAILED），
+    用 certifi 自带的证书链；certifi 不可用时退回默认行为"""
+    try:
+        import ssl
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
 
 
 def resource_path(relative_path):
@@ -450,9 +461,6 @@ class FileSearchWindow(QMainWindow):
         sb = self.statusBar()
         self.status_label = QLabel()
         sb.addWidget(self.status_label, 1)
-        self.update_button = QPushButton(objectName="small")
-        self.update_button.clicked.connect(self.check_or_apply_update)
-        sb.addPermanentWidget(self.update_button)
         self.language_button = QPushButton(objectName="small")
         self.language_button.clicked.connect(self.toggle_language)
         sb.addPermanentWidget(self.language_button)
@@ -500,6 +508,39 @@ class FileSearchWindow(QMainWindow):
         QShortcut(QKeySequence.ZoomOut, self, lambda: self.change_font_size(-1))
         QShortcut(QKeySequence(Qt.Key_Escape), self, self.cancel_search)
 
+        # 系统托盘：关闭主窗口后驻留后台（macOS 显示在菜单栏右上角）
+        self.tray_menu = QMenu(self)
+        self.act_tray_show = QAction(self)
+        self.act_tray_show.triggered.connect(self._show_main_window)
+        self.act_tray_update = QAction(self)
+        self.act_tray_update.triggered.connect(self.check_or_apply_update)
+        self.act_tray_quit = QAction(self)
+        self.act_tray_quit.triggered.connect(QApplication.quit)
+        self.tray_menu.addAction(self.act_tray_show)
+        self.tray_menu.addAction(self.act_tray_update)
+        self.tray_menu.addSeparator()
+        self.tray_menu.addAction(self.act_tray_quit)
+        self.tray = QSystemTrayIcon(
+            QIcon(resource_path(os.path.join("assets", "icon.png"))), self)
+        self.tray.setContextMenu(self.tray_menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+    def _show_main_window(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            self._show_main_window()
+
+    def eventFilter(self, obj, event):
+        # macOS 点 Dock 图标重新激活时，若主窗口已隐藏则重新显示
+        if event.type() == QEvent.ApplicationActivate and not self.isVisible():
+            self._show_main_window()
+        return super().eventFilter(obj, event)
+
     def _separator(self):
         sep = QLabel("|")
         sep.setStyleSheet(f"color: {BORDER};")
@@ -520,10 +561,13 @@ class FileSearchWindow(QMainWindow):
     def apply_language(self):
         t = self.t
         self.setWindowTitle(f"{t('app_title')} v{APP_VERSION}")
+        self.tray.setToolTip(t('app_title'))
+        self.act_tray_show.setText(t('tray_show'))
+        self.act_tray_quit.setText(t('tray_quit'))
         if self._update_info:
-            self.update_button.setText(t('update_button_new', tag=self._update_info[0]))
+            self.act_tray_update.setText(t('update_button_new', tag=self._update_info[0]))
         else:
-            self.update_button.setText(t('check_update'))
+            self.act_tray_update.setText(t('check_update'))
         self.folder_label.setText(t('search_folder'))
         self.browse_button.setText(t('browse'))
         self.search_label.setText(t('search_keywords'))
@@ -866,9 +910,10 @@ class FileSearchWindow(QMainWindow):
     # ---------- 一键升级 ----------
 
     def check_or_apply_update(self):
-        """状态栏按钮：未发现新版本时检查；已发现时直接开始下载安装"""
+        """托盘菜单：未发现新版本时检查；已发现时直接开始下载安装"""
         if self._update_busy:
             return
+        self._show_main_window()  # 进度和确认框都在主窗口上，先带出来
         if self._update_info:
             self._start_update_download()
         else:
@@ -888,7 +933,8 @@ class FileSearchWindow(QMainWindow):
             req = urllib.request.Request(RELEASES_API, headers={
                 "Accept": "application/vnd.github+json",
                 "User-Agent": "StellarSearchEverything"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=15,
+                                        context=https_context()) as resp:
                 info = json.load(resp)
             tag = info.get("tag_name", "")
             if version_tuple(tag) <= version_tuple(APP_VERSION):
@@ -914,14 +960,17 @@ class FileSearchWindow(QMainWindow):
     def _on_update_found(self, tag, url, name, manual):
         self._update_busy = False
         self._update_info = (tag, url, name)
-        self.update_button.setText(self.t('update_button_new', tag=tag))
+        self.act_tray_update.setText(self.t('update_button_new', tag=tag))
         self.status_label.setText(self.t('update_available', tag=tag))
         if manual:
             self._start_update_download()
+        else:
+            self.tray.showMessage(self.t('update_found_title'),
+                                  self.t('update_available', tag=tag))
 
     def _on_update_fail(self, message, manual):
         self._update_busy = False
-        self.update_button.setEnabled(True)
+        self.act_tray_update.setEnabled(True)
         if manual:
             self.status_label.setText(self.t('update_error', error=message))
 
@@ -937,7 +986,7 @@ class FileSearchWindow(QMainWindow):
         if ret != QMessageBox.Yes:
             return
         self._update_busy = True
-        self.update_button.setEnabled(False)
+        self.act_tray_update.setEnabled(False)
         threading.Thread(target=self._update_download_worker,
                          args=(tag, url, name), daemon=True).start()
 
@@ -946,7 +995,8 @@ class FileSearchWindow(QMainWindow):
             dest = os.path.join(tempfile.gettempdir(), name)
             req = urllib.request.Request(
                 url, headers={"User-Agent": "StellarSearchEverything"})
-            with urllib.request.urlopen(req, timeout=60) as resp, \
+            with urllib.request.urlopen(req, timeout=60,
+                                        context=https_context()) as resp, \
                     open(dest, "wb") as out:
                 total = int(resp.headers.get("Content-Length") or 0)
                 done = 0
@@ -1105,8 +1155,13 @@ rm -f "{deb_path}" "$0"
     # ---------- 关闭 ----------
 
     def closeEvent(self, event):
-        self.is_searching = False
         self._save_config()
+        if self.tray.isVisible():
+            # 关闭窗口 → 隐藏到托盘驻留后台；托盘菜单“退出”才真正退出
+            event.ignore()
+            self.hide()
+            return
+        self.is_searching = False
         event.accept()
 
 
@@ -1126,7 +1181,10 @@ def main():
         app.setWindowIcon(QIcon(icon_path))
     app.setStyle("Fusion")  # 跨平台一致的基础样式，暗色 QSS 在其上生效
     app.setStyleSheet(build_qss())
+    app.setQuitOnLastWindowClosed(False)  # 关窗后驻留托盘，退出走托盘菜单
     window = FileSearchWindow()
+    app.installEventFilter(window)        # Dock 图标激活时恢复主窗口
+    app.aboutToQuit.connect(window._save_config)
     window.show()
     sys.exit(app.exec())
 
