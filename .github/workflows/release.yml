@@ -20,12 +20,17 @@ jobs:
         run: pip install -r requirements.txt pyinstaller
       - name: Build .app
         run: pyinstaller --windowed --name "Stellar Search Everything" --icon assets/AppIcon.icns --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
-      - name: Zip .app
-        run: ditto -c -k --keepParent "dist/Stellar Search Everything.app" "StellarSearchEverything-${{ github.ref_name }}-macos-arm64.zip"
+      - name: Create DMG
+        run: |
+          mkdir dmg-staging
+          cp -R "dist/Stellar Search Everything.app" dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+          hdiutil create -volname "Stellar Search Everything" -srcfolder dmg-staging -ov -format UDZO \
+            "StellarSearchEverything-${{ github.ref_name }}-macos-arm64.dmg"
       - uses: actions/upload-artifact@v7
         with:
           name: macos
-          path: StellarSearchEverything-*.zip
+          path: StellarSearchEverything-*.dmg
 
   build-windows:
     runs-on: windows-latest
@@ -40,12 +45,18 @@ jobs:
         run: python -c "from PIL import Image; Image.open('assets/AppIcon.icns').save('icon.ico', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
       - name: Build exe
         run: pyinstaller --onefile --windowed --name StellarSearchEverything --icon icon.ico --add-data "assets/icon.png;assets" --add-data "assets/check.svg;assets" FileSearchQt.py
-      - name: Zip exe
-        run: Compress-Archive -Path dist/StellarSearchEverything.exe -DestinationPath "StellarSearchEverything-${{ github.ref_name }}-windows-x86_64.zip"
+      - name: Build installer (Inno Setup)
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DMyAppVersion=$($env:GITHUB_REF_NAME.TrimStart('v')) `
+            /DSourceExe=$PWD\dist\StellarSearchEverything.exe `
+            /DSourceIco=$PWD\icon.ico `
+            /DOutputBase=StellarSearchEverything-$env:GITHUB_REF_NAME-windows-x86_64-setup `
+            /O. packaging\windows\installer.iss
       - uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: StellarSearchEverything-*.zip
+          path: StellarSearchEverything-*-setup.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -61,12 +72,39 @@ jobs:
           .venv/bin/pip install -r requirements.txt pyinstaller
       - name: Build binary
         run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
-      - name: Package
-        run: tar -czf "StellarSearchEverything-${{ github.ref_name }}-linux-x86_64.tar.gz" -C dist stellar-search-everything
+      - name: Build .deb
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          mkdir -p pkg/DEBIAN pkg/usr/bin pkg/usr/share/applications \
+                   pkg/usr/share/icons/hicolor/256x256/apps
+          cp dist/stellar-search-everything pkg/usr/bin/
+          cp assets/icon.png pkg/usr/share/icons/hicolor/256x256/apps/stellar-search-everything.png
+          cat > pkg/usr/share/applications/stellar-search-everything.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Stellar Search Everything
+          Comment=Local file search tool
+          Exec=stellar-search-everything
+          Icon=stellar-search-everything
+          Categories=Utility;
+          EOF
+          cat > pkg/DEBIAN/control <<EOF
+          Package: stellar-search-everything
+          Version: $VER
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: StellarStar255 <goosehuangmatt@gmail.com>
+          Depends: libxcb-cursor0, libxkbcommon-x11-0
+          Description: Cross-platform local file search tool
+           Fast filename and content search with a dark-themed Qt GUI.
+          EOF
+          dpkg-deb --build --root-owner-group pkg \
+            "StellarSearchEverything-${GITHUB_REF_NAME}-linux-amd64.deb"
       - uses: actions/upload-artifact@v7
         with:
           name: linux
-          path: StellarSearchEverything-*.tar.gz
+          path: StellarSearchEverything-*.deb
 
   release:
     needs: [build-macos, build-windows, build-linux]
