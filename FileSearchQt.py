@@ -4,6 +4,7 @@
 配置文件（~/.file_search_config.json）与 Tk 版完全兼容。
 """
 import os
+import re
 import sys
 import json
 import time
@@ -152,6 +153,7 @@ class FileSearchWindow(QMainWindow):
         self.folder_history = []
         self.font_size = 13
         self.compact = False
+        self.whole_word = False
         self.is_searching = False
         self.search_generation = 0  # 递增代数：旧搜索线程的残留信号按代数丢弃
         self._load_config()
@@ -183,6 +185,7 @@ class FileSearchWindow(QMainWindow):
         fs = cfg.get('font_size', 13)
         self.font_size = int(fs) if isinstance(fs, (int, float)) and 8 <= fs <= 32 else 13
         self.compact = bool(cfg.get('compact_display', False))
+        self.whole_word = bool(cfg.get('whole_word', False))
 
     def _save_config(self):
         try:
@@ -191,6 +194,7 @@ class FileSearchWindow(QMainWindow):
                 'search_history': self.search_history[:10],
                 'folder_history': self.folder_history[:10],
                 'compact_display': self.compact_check.isChecked(),
+                'whole_word': self.whole_word_check.isChecked(),
                 'font_size': self.font_size,
                 'language': self.language,
             }
@@ -275,6 +279,8 @@ class FileSearchWindow(QMainWindow):
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.all_radio)
         self.mode_group.addButton(self.any_radio)
+        self.whole_word_check = QCheckBox()
+        self.whole_word_check.setChecked(self.whole_word)
         self.compact_check = QCheckBox()
         self.compact_check.setChecked(self.compact)
         self.compact_check.toggled.connect(self._apply_row_height)
@@ -283,6 +289,8 @@ class FileSearchWindow(QMainWindow):
         opts.addWidget(self._separator())
         for w in (self.all_radio, self.any_radio):
             opts.addWidget(w)
+        opts.addWidget(self._separator())
+        opts.addWidget(self.whole_word_check)
         opts.addWidget(self._separator())
         opts.addWidget(self.compact_check)
         opts.addStretch(1)
@@ -390,6 +398,8 @@ class FileSearchWindow(QMainWindow):
         self.content_radio.setText(t('by_content'))
         self.all_radio.setText(t('match_all'))
         self.any_radio.setText(t('match_any'))
+        self.whole_word_check.setText(t('whole_word'))
+        self.whole_word_check.setToolTip(t('whole_word_tip'))
         self.compact_check.setText(t('compact'))
         self.result_label.setText(t('results'))
         self.font_label.setText(t('font'))
@@ -473,39 +483,61 @@ class FileSearchWindow(QMainWindow):
         return [term.strip() for term in search_text.split() if term.strip()]
 
     @staticmethod
-    def match_keywords(text, keywords_lower, match_mode):
+    def word_pattern(kw_lower):
+        """全词匹配的正则：关键词的字母/数字端不得与相邻字母/数字连成一体。
+        仅约束 ASCII 字母数字端（中文等 CJK 词天然无分隔符，不加约束），
+        因此 a3 匹配 zhiyuan_a3_video / 智元a3，但不匹配 e183a375。"""
+        pre = r'(?<![a-z0-9])' if re.match(r'[a-z0-9]', kw_lower) else ''
+        post = r'(?![a-z0-9])' if re.search(r'[a-z0-9]$', kw_lower) else ''
+        return pre + re.escape(kw_lower) + post
+
+    @classmethod
+    def keyword_in(cls, kw, text_lower, whole_word, at_text_end_ok=True):
+        """text_lower 中是否命中 kw。at_text_end_ok=False 时不信任恰好贴着文本
+        末尾结束的命中（分块读取时看不到下一个字符，无法判定词边界）。"""
+        if not whole_word:
+            return kw in text_lower
+        for m in re.finditer(cls.word_pattern(kw), text_lower):
+            if at_text_end_ok or m.end() < len(text_lower):
+                return True
+        return False
+
+    @classmethod
+    def match_keywords(cls, text, keywords_lower, match_mode, whole_word=False):
         text_lower = text.lower()
         if match_mode == "all":
-            return all(kw in text_lower for kw in keywords_lower)
-        return any(kw in text_lower for kw in keywords_lower)
+            return all(cls.keyword_in(kw, text_lower, whole_word) for kw in keywords_lower)
+        return any(cls.keyword_in(kw, text_lower, whole_word) for kw in keywords_lower)
 
     @classmethod
     def content_matches(cls, path, keywords_lower, match_mode, file_size=None,
-                        chunk_size=4 * 1024 * 1024):
+                        chunk_size=4 * 1024 * 1024, whole_word=False):
         if file_size is not None and file_size <= chunk_size:
             try:
                 with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    return cls.match_keywords(f.read(), keywords_lower, match_mode)
+                    return cls.match_keywords(f.read(), keywords_lower, match_mode, whole_word)
             except Exception:
                 return False
         found = [False] * len(keywords_lower)
-        overlap = max(len(kw) for kw in keywords_lower) - 1
+        # 全词模式 tail 多留一个字符，保证跨块命中重扫时能看到前一个字符判定词边界
+        overlap = max(len(kw) for kw in keywords_lower) + (1 if whole_word else -1)
         tail = ""
         try:
             with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                while True:
-                    chunk = f.read(chunk_size)
-                    if not chunk:
-                        break
+                chunk = f.read(chunk_size)
+                while chunk:
+                    next_chunk = f.read(chunk_size)
+                    at_eof = not next_chunk
                     text = (tail + chunk).lower()
                     for i, kw in enumerate(keywords_lower):
-                        if not found[i] and kw in text:
+                        if not found[i] and cls.keyword_in(kw, text, whole_word, at_eof):
                             if match_mode != "all":
                                 return True
                             found[i] = True
                     if match_mode == "all" and all(found):
                         return True
                     tail = text[-overlap:] if overlap > 0 else ""
+                    chunk = next_chunk
         except Exception:
             return False
         return match_mode == "all" and all(found)
@@ -540,10 +572,11 @@ class FileSearchWindow(QMainWindow):
 
         search_type = "name" if self.name_radio.isChecked() else "content"
         match_mode = "all" if self.all_radio.isChecked() else "any"
+        whole_word = self.whole_word_check.isChecked()
         thread = threading.Thread(
             target=self._search_worker,
             args=(self.search_generation, search_path,
-                  [kw.lower() for kw in keywords], search_type, match_mode),
+                  [kw.lower() for kw in keywords], search_type, match_mode, whole_word),
             daemon=True)
         thread.start()
 
@@ -556,7 +589,8 @@ class FileSearchWindow(QMainWindow):
             self.status_label.setText(self.t('search_cancelled'))
             self.table.setSortingEnabled(True)
 
-    def _search_worker(self, generation, search_path, keywords_lower, search_type, match_mode):
+    def _search_worker(self, generation, search_path, keywords_lower,
+                       search_type, match_mode, whole_word):
         def active():
             return self.is_searching and self.search_generation == generation
 
@@ -601,21 +635,23 @@ class FileSearchWindow(QMainWindow):
                             try:
                                 if entry.is_dir(follow_symlinks=False):
                                     if search_type == "name" and self.match_keywords(
-                                            entry.name, keywords_lower, match_mode):
+                                            entry.name, keywords_lower, match_mode, whole_word):
                                         batch.append(make_row(
                                             entry, entry.stat(follow_symlinks=False), True))
                                         count += 1
                                     dirs.append(entry.path)
                                 elif entry.is_file(follow_symlinks=False):
                                     if search_type == "name":
-                                        if self.match_keywords(entry.name, keywords_lower, match_mode):
+                                        if self.match_keywords(entry.name, keywords_lower,
+                                                               match_mode, whole_word):
                                             batch.append(make_row(
                                                 entry, entry.stat(follow_symlinks=False), False))
                                             count += 1
                                     else:
                                         st = entry.stat(follow_symlinks=False)
                                         if st.st_size <= 100 * 1024 * 1024 and self.content_matches(
-                                                entry.path, keywords_lower, match_mode, st.st_size):
+                                                entry.path, keywords_lower, match_mode, st.st_size,
+                                                whole_word=whole_word):
                                             batch.append(make_row(entry, st, False))
                                             count += 1
                                 now = time.time()
