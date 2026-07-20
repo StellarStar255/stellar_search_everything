@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.9"
+APP_VERSION = "1.6.10"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -1242,6 +1242,12 @@ def main():
             os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
 
     app = QApplication(sys.argv)
+    # 应用标识：让运行时窗口的 WM_CLASS / Wayland app_id 与安装的
+    # stellar-search-everything.desktop 对齐，否则桌面环境会把“运行中的窗口”
+    # 当成另一个应用，在任务栏/程序列表里多出一个图标（与启动器图标并排）。
+    # 需与 .desktop 文件名及其 StartupWMClass 一致
+    app.setApplicationName("stellar-search-everything")
+    app.setDesktopFileName("stellar-search-everything")
 
     # 单实例：已有实例在运行时，唤起它的主窗口后退出。
     # Linux 托盘左键被系统占用弹菜单，主窗口隐藏后 Dock 图标点击会启动新进程，

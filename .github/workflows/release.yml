@@ -112,6 +112,7 @@ jobs:
           Exec=stellar-search-everything
           Icon=stellar-search-everything
           Categories=Utility;
+          StartupWMClass=stellar-search-everything
           EOF
           cat > pkg/DEBIAN/control <<EOF
           Package: stellar-search-everything
