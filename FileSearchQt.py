@@ -305,6 +305,9 @@ class FileSearchWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
+        # 关闭自动折行：长文件名是不可折断的整词，折行会被挤出单行行高，
+        # 只剩“…”；关闭后按字符截断，能显示的部分尽量显示，末尾才是“…”
+        self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicatorShown(True)
