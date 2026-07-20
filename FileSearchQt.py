@@ -18,7 +18,7 @@ from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
                             QAbstractTableModel, QModelIndex, QTimer, QEvent)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
-                           QShortcut, QColor, QBrush)
+                           QShortcut, QColor, QBrush, QCursor)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
     QRadioButton, QCheckBox, QHBoxLayout, QVBoxLayout, QGridLayout,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.6"
+APP_VERSION = "1.6.7"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -569,7 +569,12 @@ class FileSearchWindow(QMainWindow):
         self.tray_menu.addAction(self.act_tray_quit)
         self.tray = QSystemTrayIcon(
             QIcon(resource_path(os.path.join("assets", "icon.png"))), self)
-        self.tray.setContextMenu(self.tray_menu)
+        # Linux 下不挂 setContextMenu：托盘一旦带菜单，GNOME/KDE 会把左键
+        # 固定用于弹菜单，应用收不到“激活”，左键点了只出菜单。改为不导出菜单
+        # （上报为非菜单项，左键 → 激活 → 显示窗口），菜单在右键(Context)时手动弹出。
+        # macOS/Windows 保留原生菜单行为（Windows 左键本就发 Trigger，macOS 用 Dock）
+        if not sys.platform.startswith("linux"):
+            self.tray.setContextMenu(self.tray_menu)
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
@@ -579,11 +584,12 @@ class FileSearchWindow(QMainWindow):
         self.activateWindow()
 
     def _on_tray_activated(self, reason):
-        # Trigger=左键（Windows 等平台）；MiddleClick=SNI 的直接激活（Linux 托盘中键）。
-        # GNOME/AppIndicator 的左键被系统用于弹菜单，应用收不到事件，
-        # 「点一下弹开」由单实例唤起（再点 Dock 图标）兜底
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.MiddleClick):
+        # 左键/中键/双击 → 显示主窗口；右键(Context) → 手动弹出菜单
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick,
+                      QSystemTrayIcon.MiddleClick):
             self._show_main_window()
+        elif reason == QSystemTrayIcon.Context:
+            self.tray_menu.popup(QCursor.pos())
 
     def eventFilter(self, obj, event):
         # macOS 点 Dock 图标重新激活时，若主窗口已隐藏则重新显示
