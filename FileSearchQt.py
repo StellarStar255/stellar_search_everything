@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.6.4"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -89,6 +89,19 @@ def setup_launch_log():
         faulthandler.enable(file=f)  # 段错误时把各线程栈写进日志
     except Exception:
         pass
+
+
+def fix_qt_plugin_env():
+    """打包运行时强制 Qt 使用随包自带的插件目录。
+    conda 等环境会导出 QT_PLUGIN_PATH / QT_QPA_PLATFORM_PLUGIN_PATH 指向
+    自己的 Qt，打包应用继承后找不到平台插件（Could not find "xcb" in ""）"""
+    if not getattr(sys, "frozen", False):
+        return
+    base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    plugin_dir = os.path.join(base, "PySide6", "Qt", "plugins")
+    if os.path.isdir(plugin_dir):
+        os.environ["QT_PLUGIN_PATH"] = plugin_dir
+        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(plugin_dir, "platforms")
 
 
 def resource_path(relative_path):
@@ -1204,6 +1217,7 @@ rm -f "{deb_path}" "$0"
 
 def main():
     setup_launch_log()
+    fix_qt_plugin_env()
     # Linux Wayland 会话下优先用原生 wayland 平台插件：
     # X11/XWayland 的交互式缩放是异步的（边框先动、内容后画），
     # 拖拽时会抖动/闪烁；wayland 下逐帧同步，无此问题。

@@ -3,6 +3,14 @@
 本项目的所有重要变更都会记录在此文件中。发布新版本时，请在下方添加对应版本的小节，
 tag 推送后 CI 会自动提取该小节作为 GitHub Release 的说明。
 
+## [1.6.4] - 2026-07-20
+
+### 🐛 修复
+
+- **conda 等环境下 Linux 版启动崩溃**（`Could not find the Qt platform plugin "xcb" in ""`）：
+  conda 导出的 `QT_PLUGIN_PATH` / `QT_QPA_PLATFORM_PLUGIN_PATH` 会覆盖打包应用的
+  Qt 插件搜索路径。现启动时强制指回包内自带插件目录，不受外部环境变量影响
+
 ## [1.6.3] - 2026-07-20
 
 ### 🐛 诊断能力
