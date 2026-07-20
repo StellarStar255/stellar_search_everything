@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -956,6 +956,8 @@ class FileSearchWindow(QMainWindow):
         self._update_busy = False
         if manual:
             self.status_label.setText(self.t('update_latest', version=APP_VERSION))
+            QMessageBox.information(self, self.t('check_update'),
+                                    self.t('update_latest', version=APP_VERSION))
 
     def _on_update_found(self, tag, url, name, manual):
         self._update_busy = False
@@ -973,6 +975,8 @@ class FileSearchWindow(QMainWindow):
         self.act_tray_update.setEnabled(True)
         if manual:
             self.status_label.setText(self.t('update_error', error=message))
+            QMessageBox.warning(self, self.t('check_update'),
+                                self.t('update_error', error=message))
 
     def _start_update_download(self):
         tag, url, name = self._update_info
