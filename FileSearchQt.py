@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.8"
+APP_VERSION = "1.6.9"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -318,6 +318,7 @@ class FileSearchWindow(QMainWindow):
 
         self._update_info = None      # 发现的新版本 (tag, url, 文件名)
         self._update_busy = False
+        self._really_quitting = False  # True 时关闭窗口才真正退出（否则最小化到任务栏）
         self.update_signals = UpdateSignals()
 
         self._build_ui()
@@ -562,7 +563,7 @@ class FileSearchWindow(QMainWindow):
         self.act_tray_update = QAction(self)
         self.act_tray_update.triggered.connect(self.check_or_apply_update)
         self.act_tray_quit = QAction(self)
-        self.act_tray_quit.triggered.connect(QApplication.quit)
+        self.act_tray_quit.triggered.connect(self._quit_app)
         self.tray_menu.addAction(self.act_tray_show)
         self.tray_menu.addAction(self.act_tray_update)
         self.tray_menu.addSeparator()
@@ -576,7 +577,13 @@ class FileSearchWindow(QMainWindow):
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
+    def _quit_app(self):
+        self._really_quitting = True
+        self.is_searching = False
+        QApplication.quit()
+
     def _show_main_window(self):
+        self.setWindowState(self.windowState() & ~Qt.WindowMinimized)  # 取消最小化
         self.show()
         self.raise_()
         self.activateWindow()
@@ -1213,10 +1220,11 @@ rm -f "{deb_path}" "$0"
 
     def closeEvent(self, event):
         self._save_config()
-        if self.tray.isVisible():
-            # 关闭窗口 → 隐藏到托盘驻留后台；托盘菜单“退出”才真正退出
+        if not self._really_quitting:
+            # 关闭窗口 → 最小化到任务栏，点任务栏图标一下即还原（GNOME 上可靠的一键还原）。
+            # 程序继续在后台运行，托盘菜单/任务栏「退出」才真正退出
             event.ignore()
-            self.hide()
+            self.showMinimized()
             return
         self.is_searching = False
         event.accept()
