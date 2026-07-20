@@ -550,6 +550,8 @@ class FileSearchWindow(QMainWindow):
     def cancel_search(self):
         if self.is_searching:
             self.is_searching = False
+            # 作废本次搜索：已排队但尚未送达的结果批次不得在恢复排序后再插入表格
+            self.search_generation += 1
             self.search_button.setText(self.t('search'))
             self.status_label.setText(self.t('search_cancelled'))
             self.table.setSortingEnabled(True)
@@ -653,8 +655,10 @@ class FileSearchWindow(QMainWindow):
             name_item = SortableItem(name)
             name_item.setData(Qt.UserRole, name.lower())
             name_item.setData(Qt.UserRole + 1, path)  # 完整路径存在数据里，不再需要隐藏列
+            name_item.setToolTip(name)  # 名字被省略显示（“…”）时悬停可见全名
             path_item = SortableItem(parent)
             path_item.setData(Qt.UserRole, parent.lower())
+            path_item.setToolTip(path)
             size_item = SortableItem(size_str)
             size_item.setData(Qt.UserRole, size_bytes)
             size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
