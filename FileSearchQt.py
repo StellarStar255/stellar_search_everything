@@ -9,11 +9,13 @@ import sys
 import json
 import time
 import datetime
+import tempfile
 import subprocess
 import threading
+import urllib.request
 
 from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
-                            QAbstractTableModel, QModelIndex)
+                            QAbstractTableModel, QModelIndex, QTimer)
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
                            QShortcut, QColor, QBrush)
 from PySide6.QtWidgets import (
@@ -24,6 +26,25 @@ from PySide6.QtWidgets import (
 )
 
 from translations import TRANSLATIONS
+
+APP_VERSION = "1.4.0"
+GITHUB_REPO = "StellarStar255/stellar_search_everything"
+RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+
+def version_tuple(s):
+    """'v1.4.0' / '1.4.0' → (1, 4, 0)，用于版本比较"""
+    nums = re.findall(r"\d+", s)
+    return tuple(int(n) for n in nums[:3]) if nums else (0,)
+
+
+def platform_asset_suffix():
+    """当前平台对应的 Release 安装包文件名后缀"""
+    if sys.platform == "darwin":
+        return ".dmg"
+    if sys.platform.startswith("win"):
+        return "-setup.exe"
+    return ".deb"
 
 
 def resource_path(relative_path):
@@ -206,6 +227,15 @@ class SearchSignals(QObject):
     error = Signal(int, str)
 
 
+class UpdateSignals(QObject):
+    """更新检查/下载线程 → 界面线程"""
+    status = Signal(str)                  # 状态栏文本（下载进度等）
+    latest = Signal(bool)                 # 已是最新（manual）
+    found = Signal(str, str, str, bool)   # tag, 下载地址, 文件名, manual
+    ready = Signal(str, str)              # tag, 安装包本地路径
+    fail = Signal(str, bool)              # 错误消息, manual
+
+
 class FileSearchWindow(QMainWindow):
     CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".file_search_config.json")
 
@@ -227,9 +257,22 @@ class FileSearchWindow(QMainWindow):
         self.signals.done.connect(self._on_done)
         self.signals.error.connect(self._on_error)
 
+        self._update_info = None      # 发现的新版本 (tag, url, 文件名)
+        self._update_busy = False
+        self.update_signals = UpdateSignals()
+
         self._build_ui()
+
+        self.update_signals.status.connect(self.status_label.setText)
+        self.update_signals.latest.connect(self._on_update_latest)
+        self.update_signals.found.connect(self._on_update_found)
+        self.update_signals.ready.connect(self._on_update_ready)
+        self.update_signals.fail.connect(self._on_update_fail)
+
         self.apply_language()
         self._apply_font_size()
+        # 启动 3 秒后后台静默检查更新（有新版时“检查更新”按钮变为“升级到 vX.Y.Z”）
+        QTimer.singleShot(3000, lambda: self._start_update_check(manual=False))
 
     # ---------- 配置 ----------
 
@@ -390,6 +433,9 @@ class FileSearchWindow(QMainWindow):
         sb = self.statusBar()
         self.status_label = QLabel()
         sb.addWidget(self.status_label, 1)
+        self.update_button = QPushButton(objectName="small")
+        self.update_button.clicked.connect(self.check_or_apply_update)
+        sb.addPermanentWidget(self.update_button)
         self.language_button = QPushButton(objectName="small")
         self.language_button.clicked.connect(self.toggle_language)
         sb.addPermanentWidget(self.language_button)
@@ -456,7 +502,11 @@ class FileSearchWindow(QMainWindow):
 
     def apply_language(self):
         t = self.t
-        self.setWindowTitle(t('app_title'))
+        self.setWindowTitle(f"{t('app_title')} v{APP_VERSION}")
+        if self._update_info:
+            self.update_button.setText(t('update_button_new', tag=self._update_info[0]))
+        else:
+            self.update_button.setText(t('check_update'))
         self.folder_label.setText(t('search_folder'))
         self.browse_button.setText(t('browse'))
         self.search_label.setText(t('search_keywords'))
@@ -774,6 +824,168 @@ class FileSearchWindow(QMainWindow):
                              self.t('search_error_msg', error=message))
         self.search_button.setText(self.t('search'))
         self.table.setSortingEnabled(True)
+
+    # ---------- 一键升级 ----------
+
+    def check_or_apply_update(self):
+        """状态栏按钮：未发现新版本时检查；已发现时直接开始下载安装"""
+        if self._update_busy:
+            return
+        if self._update_info:
+            self._start_update_download()
+        else:
+            self._start_update_check(manual=True)
+
+    def _start_update_check(self, manual):
+        if self._update_busy or self._update_info:
+            return
+        self._update_busy = True
+        if manual:
+            self.status_label.setText(self.t('update_checking'))
+        threading.Thread(target=self._update_check_worker, args=(manual,),
+                         daemon=True).start()
+
+    def _update_check_worker(self, manual):
+        try:
+            req = urllib.request.Request(RELEASES_API, headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "StellarSearchEverything"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                info = json.load(resp)
+            tag = info.get("tag_name", "")
+            if version_tuple(tag) <= version_tuple(APP_VERSION):
+                self.update_signals.latest.emit(manual)
+                return
+            suffix = platform_asset_suffix()
+            asset = next((a for a in info.get("assets", [])
+                          if a.get("name", "").endswith(suffix)), None)
+            if asset is None:
+                self.update_signals.fail.emit(
+                    self.t('update_no_asset', tag=tag), manual)
+                return
+            self.update_signals.found.emit(
+                tag, asset["browser_download_url"], asset["name"], manual)
+        except Exception as e:
+            self.update_signals.fail.emit(str(e), manual)
+
+    def _on_update_latest(self, manual):
+        self._update_busy = False
+        if manual:
+            self.status_label.setText(self.t('update_latest', version=APP_VERSION))
+
+    def _on_update_found(self, tag, url, name, manual):
+        self._update_busy = False
+        self._update_info = (tag, url, name)
+        self.update_button.setText(self.t('update_button_new', tag=tag))
+        self.status_label.setText(self.t('update_available', tag=tag))
+        if manual:
+            self._start_update_download()
+
+    def _on_update_fail(self, message, manual):
+        self._update_busy = False
+        self.update_button.setEnabled(True)
+        if manual:
+            self.status_label.setText(self.t('update_error', error=message))
+
+    def _start_update_download(self):
+        tag, url, name = self._update_info
+        if not getattr(sys, 'frozen', False):
+            QMessageBox.information(self, self.t('update_found_title'),
+                                    self.t('update_source_run', tag=tag))
+            return
+        ret = QMessageBox.question(
+            self, self.t('update_found_title'),
+            self.t('update_confirm', tag=tag, version=APP_VERSION))
+        if ret != QMessageBox.Yes:
+            return
+        self._update_busy = True
+        self.update_button.setEnabled(False)
+        threading.Thread(target=self._update_download_worker,
+                         args=(tag, url, name), daemon=True).start()
+
+    def _update_download_worker(self, tag, url, name):
+        try:
+            dest = os.path.join(tempfile.gettempdir(), name)
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "StellarSearchEverything"})
+            with urllib.request.urlopen(req, timeout=60) as resp, \
+                    open(dest, "wb") as out:
+                total = int(resp.headers.get("Content-Length") or 0)
+                done = 0
+                while True:
+                    block = resp.read(256 * 1024)
+                    if not block:
+                        break
+                    out.write(block)
+                    done += len(block)
+                    if total:
+                        self.update_signals.status.emit(self.t(
+                            'update_downloading', percent=done * 100 // total))
+            self.update_signals.ready.emit(tag, dest)
+        except Exception as e:
+            self.update_signals.fail.emit(str(e), True)
+
+    def _on_update_ready(self, tag, installer):
+        self.status_label.setText(self.t('update_installing'))
+        try:
+            if sys.platform == "darwin":
+                self._install_update_macos(installer)
+            elif sys.platform.startswith("win"):
+                self._install_update_windows(installer)
+            else:
+                self._install_update_linux(installer)
+        except Exception as e:
+            self._on_update_fail(str(e), True)
+
+    def _install_update_macos(self, dmg_path):
+        """退出后挂载 DMG 原地替换 .app（去掉隔离属性，避免“无法验证开发者”）并重启"""
+        exe = sys.executable
+        pos = exe.find(".app/")
+        if pos < 0:
+            raise RuntimeError("未找到 .app 包路径")
+        app_dir = exe[:pos + 4]
+        mnt = os.path.join(tempfile.gettempdir(), "sse_update_mnt")
+        script = os.path.join(tempfile.gettempdir(), "sse_update.sh")
+        with open(script, "w") as f:
+            f.write(f'''#!/bin/bash
+while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.3; done
+hdiutil attach "{dmg_path}" -nobrowse -readonly -mountpoint "{mnt}" || exit 1
+SRC=$(ls -d "{mnt}"/*.app | head -1)
+rm -rf "{app_dir}"
+ditto "$SRC" "{app_dir}"
+hdiutil detach "{mnt}" -force
+xattr -dr com.apple.quarantine "{app_dir}" 2>/dev/null
+open "{app_dir}"
+rm -f "{dmg_path}" "$0"
+''')
+        os.chmod(script, 0o755)
+        subprocess.Popen(["/bin/bash", script], start_new_session=True)
+        QApplication.quit()
+
+    def _install_update_windows(self, setup_path):
+        """退出后静默运行 Inno Setup 安装向导并重启"""
+        ps = (f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue; "
+              f"Start-Process -FilePath '{setup_path}' "
+              f"-ArgumentList '/VERYSILENT','/NORESTART' -Wait; "
+              f"Start-Process -FilePath '{sys.executable}'")
+        DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
+        subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden",
+                          "-Command", ps], creationflags=DETACHED)
+        QApplication.quit()
+
+    def _install_update_linux(self, deb_path):
+        """退出后经 pkexec 安装 deb（弹系统授权框）并重启"""
+        script = os.path.join(tempfile.gettempdir(), "sse_update.sh")
+        with open(script, "w") as f:
+            f.write(f'''#!/bin/sh
+while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.3; done
+pkexec dpkg -i "{deb_path}" || exit 1
+rm -f "{deb_path}" "$0"
+"{sys.executable}" &
+''')
+        os.chmod(script, 0o755)
+        subprocess.Popen(["/bin/sh", script], start_new_session=True)
+        QApplication.quit()
 
     # ---------- 结果操作 ----------
 
