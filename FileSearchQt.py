@@ -16,6 +16,7 @@ import urllib.request
 
 from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
                             QAbstractTableModel, QModelIndex, QTimer, QEvent)
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
                            QShortcut, QColor, QBrush)
 from PySide6.QtWidgets import (
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.5"
+APP_VERSION = "1.6.6"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -578,7 +579,10 @@ class FileSearchWindow(QMainWindow):
         self.activateWindow()
 
     def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:
+        # Trigger=左键（Windows 等平台）；MiddleClick=SNI 的直接激活（Linux 托盘中键）。
+        # GNOME/AppIndicator 的左键被系统用于弹菜单，应用收不到事件，
+        # 「点一下弹开」由单实例唤起（再点 Dock 图标）兜底
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.MiddleClick):
             self._show_main_window()
 
     def eventFilter(self, obj, event):
@@ -1227,6 +1231,24 @@ def main():
             os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
 
     app = QApplication(sys.argv)
+
+    # 单实例：已有实例在运行时，唤起它的主窗口后退出。
+    # Linux 托盘左键被系统占用弹菜单，主窗口隐藏后 Dock 图标点击会启动新进程，
+    # 这里把这次点击转化为「弹出已有窗口」
+    instance_key = ("stellar_search_everything_"
+                    + (os.environ.get('USER') or os.environ.get('USERNAME') or 'u'))
+    probe = QLocalSocket()
+    probe.connectToServer(instance_key)
+    if probe.waitForConnected(300):
+        probe.write(b"show")
+        probe.flush()
+        probe.waitForBytesWritten(300)
+        probe.disconnectFromServer()
+        return
+    QLocalServer.removeServer(instance_key)  # 清理上次异常退出的残留 socket
+    instance_server = QLocalServer()
+    instance_server.listen(instance_key)
+
     # 应用级图标：macOS Dock / 任务栏用的是这个，窗口级 setWindowIcon 管不到
     icon_path = resource_path(os.path.join("assets", "icon.png"))
     if os.path.exists(icon_path):
@@ -1235,6 +1257,15 @@ def main():
     app.setStyleSheet(build_qss())
     app.setQuitOnLastWindowClosed(False)  # 关窗后驻留托盘，退出走托盘菜单
     window = FileSearchWindow()
+
+    def on_second_instance():
+        while instance_server.hasPendingConnections():
+            conn = instance_server.nextPendingConnection()
+            conn.readAll()
+            conn.disconnectFromServer()
+        window._show_main_window()
+
+    instance_server.newConnection.connect(on_second_instance)
     app.installEventFilter(window)        # Dock 图标激活时恢复主窗口
     app.aboutToQuit.connect(window._save_config)
     window.show()
