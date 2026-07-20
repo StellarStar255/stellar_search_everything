@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.6.3"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
