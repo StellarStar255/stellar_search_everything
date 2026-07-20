@@ -66,11 +66,20 @@ jobs:
     container: ubuntu:22.04
     steps:
       - name: Install system dependencies
+        # Qt 运行库必须装全：PyInstaller 的 Qt 钩子要在构建机加载 PySide6
+        # 查询插件目录，缺 libglib 等库时会静默跳过插件收集，打出没有
+        # xcb 平台插件的残包（运行时报 Could not find "xcb" in ""）
         run: |
           apt-get update
-          apt-get install -y python3 python3-venv python3-pip binutils git \
-            libgl1 libegl1 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
-            libxcb-keysyms1 libxcb-shape0
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            python3 python3-venv python3-pip binutils git \
+            libglib2.0-0 libdbus-1-3 libfontconfig1 libfreetype6 \
+            libgl1 libegl1 libopengl0 libx11-6 libx11-xcb1 libxext6 libxrender1 \
+            libsm6 libice6 libxkbcommon0 libxkbcommon-x11-0 \
+            libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-render0 libxcb-render-util0 libxcb-shm0 libxcb-randr0 \
+            libxcb-xfixes0 libxcb-sync1 libxcb-xkb1 libxcb-image0 libxcb-util1 \
+            libxcb-glx0
       - uses: actions/checkout@v7
       - name: Install dependencies
         run: |
@@ -78,6 +87,16 @@ jobs:
           .venv/bin/pip install -r requirements.txt pyinstaller
       - name: Build binary
         run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
+      - name: Verify bundled Qt platform plugin
+        # 防止再次打出没有 xcb 插件的残包：缺了直接让构建失败
+        run: |
+          .venv/bin/python - <<'EOF'
+          from PyInstaller.archive.readers import CArchiveReader
+          names = list(CArchiveReader("dist/stellar-search-everything").toc.keys())
+          hits = [n for n in names if "platforms" in n and "qxcb" in n]
+          assert hits, f"包内缺少 xcb 平台插件！归档条目数={len(names)}"
+          print("bundled:", hits)
+          EOF
       - name: Build .deb
         run: |
           VER="${GITHUB_REF_NAME#v}"
