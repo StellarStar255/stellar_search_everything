@@ -58,6 +58,39 @@ def https_context():
         return None
 
 
+LAUNCH_LOG = os.path.join(os.path.expanduser("~"), ".stellar_search_everything.log")
+
+
+def setup_launch_log():
+    """打包运行时把 stderr 重定向到 ~/.stellar_search_everything.log。
+    从桌面图标启动的应用没有终端，Qt 平台插件缺库、原生崩溃等致命错误
+    全部输出到看不见的 stderr——落盘后才有排查依据。终端里运行则不重定向。"""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        try:
+            if os.path.getsize(LAUNCH_LOG) > 1024 * 1024:
+                os.remove(LAUNCH_LOG)
+        except OSError:
+            pass
+        f = open(LAUNCH_LOG, "a", buffering=1, encoding="utf-8", errors="replace")
+        f.write(f"\n--- 启动 v{APP_VERSION} "
+                f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} "
+                f"platform={sys.platform} exe={sys.executable} ---\n")
+        interactive = False
+        try:
+            interactive = sys.stderr is not None and sys.stderr.isatty()
+        except Exception:
+            pass
+        if not interactive:
+            os.dup2(f.fileno(), 2)   # 原生层（Qt/qFatal）的 stderr 也进日志
+            sys.stderr = f
+        import faulthandler
+        faulthandler.enable(file=f)  # 段错误时把各线程栈写进日志
+    except Exception:
+        pass
+
+
 def resource_path(relative_path):
     """获取资源文件的绝对路径（兼容打包后的应用）"""
     if hasattr(sys, '_MEIPASS'):
@@ -1170,6 +1203,7 @@ rm -f "{deb_path}" "$0"
 
 
 def main():
+    setup_launch_log()
     # Linux Wayland 会话下优先用原生 wayland 平台插件：
     # X11/XWayland 的交互式缩放是异步的（边框先动、内容后画），
     # 拖拽时会抖动/闪烁；wayland 下逐帧同步，无此问题。
