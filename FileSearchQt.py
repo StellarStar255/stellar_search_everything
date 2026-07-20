@@ -136,10 +136,10 @@ class SortableItem(QTableWidgetItem):
 
 class SearchSignals(QObject):
     """工作线程 → 界面线程的信号桥（Qt 信号跨线程自动排队）"""
-    batch = Signal(list)
-    progress = Signal(int)
-    done = Signal(int, str)
-    error = Signal(str)
+    batch = Signal(int, list)
+    progress = Signal(int, int)
+    done = Signal(int, int, str)
+    error = Signal(int, str)
 
 
 class FileSearchWindow(QMainWindow):
@@ -153,6 +153,7 @@ class FileSearchWindow(QMainWindow):
         self.font_size = 13
         self.compact = False
         self.is_searching = False
+        self.search_generation = 0  # 递增代数：旧搜索线程的残留信号按代数丢弃
         self._load_config()
 
         self.signals = SearchSignals()
@@ -533,6 +534,7 @@ class FileSearchWindow(QMainWindow):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         self.is_searching = True
+        self.search_generation += 1
         self.search_button.setText(self.t('cancel'))
         self.status_label.setText(self.t('searching', keywords=', '.join(keywords)))
 
@@ -540,7 +542,8 @@ class FileSearchWindow(QMainWindow):
         match_mode = "all" if self.all_radio.isChecked() else "any"
         thread = threading.Thread(
             target=self._search_worker,
-            args=(search_path, [kw.lower() for kw in keywords], search_type, match_mode),
+            args=(self.search_generation, search_path,
+                  [kw.lower() for kw in keywords], search_type, match_mode),
             daemon=True)
         thread.start()
 
@@ -551,7 +554,10 @@ class FileSearchWindow(QMainWindow):
             self.status_label.setText(self.t('search_cancelled'))
             self.table.setSortingEnabled(True)
 
-    def _search_worker(self, search_path, keywords_lower, search_type, match_mode):
+    def _search_worker(self, generation, search_path, keywords_lower, search_type, match_mode):
+        def active():
+            return self.is_searching and self.search_generation == generation
+
         try:
             count = 0
             batch = []
@@ -578,17 +584,17 @@ class FileSearchWindow(QMainWindow):
                 nonlocal batch
                 if batch:
                     rows, batch = batch, []
-                    self.signals.batch.emit(rows)
+                    self.signals.batch.emit(generation, rows)
 
             def scan(path):
                 nonlocal count, last_update
-                if not self.is_searching:
+                if not active():
                     return
                 try:
                     with os.scandir(path) as entries:
                         dirs = []
                         for entry in entries:
-                            if not self.is_searching:
+                            if not active():
                                 return
                             try:
                                 if entry.is_dir(follow_symlinks=False):
@@ -614,11 +620,11 @@ class FileSearchWindow(QMainWindow):
                                 if len(batch) >= batch_size or (now - last_update) > update_interval:
                                     flush()
                                     last_update = now
-                                    self.signals.progress.emit(count)
+                                    self.signals.progress.emit(generation, count)
                             except (PermissionError, OSError):
                                 continue
                         for d in dirs:
-                            if not self.is_searching:
+                            if not active():
                                 return
                             scan(d)
                 except (PermissionError, OSError):
@@ -626,16 +632,19 @@ class FileSearchWindow(QMainWindow):
 
             scan(search_path)
             flush()
-            if self.is_searching:
-                self.signals.done.emit(count, match_mode)
+            if active():
+                self.signals.done.emit(generation, count, match_mode)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            self.signals.error.emit(generation, str(e))
         finally:
-            self.is_searching = False
+            if self.search_generation == generation:
+                self.is_searching = False
 
     # ---------- 搜索结果（界面线程） ----------
 
-    def _add_batch(self, rows):
+    def _add_batch(self, generation, rows):
+        if generation != self.search_generation:
+            return  # 已取消/已重启的旧搜索残留结果
         table = self.table
         start = table.rowCount()
         table.setRowCount(start + len(rows))
@@ -658,16 +667,22 @@ class FileSearchWindow(QMainWindow):
                     item.setForeground(folder_brush)
                 table.setItem(row, col, item)
 
-    def _on_progress(self, count):
+    def _on_progress(self, generation, count):
+        if generation != self.search_generation:
+            return
         self.status_label.setText(self.t('searching_progress', count=count))
 
-    def _on_done(self, count, match_mode):
+    def _on_done(self, generation, count, match_mode):
+        if generation != self.search_generation:
+            return
         mode_text = self.t('mode_all') if match_mode == "all" else self.t('mode_any')
         self.status_label.setText(self.t('search_done', count=count, mode=mode_text))
         self.search_button.setText(self.t('search'))
         self.table.setSortingEnabled(True)
 
-    def _on_error(self, message):
+    def _on_error(self, generation, message):
+        if generation != self.search_generation:
+            return
         self.status_label.setText(self.t('search_error_status', error=message))
         QMessageBox.critical(self, self.t('error'),
                              self.t('search_error_msg', error=message))
