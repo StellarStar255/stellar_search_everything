@@ -247,6 +247,7 @@ class FileSearchWindow(QMainWindow):
         self.font_size = 13
         self.compact = False
         self.whole_word = False
+        self.entry_filter = 'all'
         self.is_searching = False
         self.search_generation = 0  # 递增代数：旧搜索线程的残留信号按代数丢弃
         self._load_config()
@@ -292,6 +293,8 @@ class FileSearchWindow(QMainWindow):
         self.font_size = int(fs) if isinstance(fs, (int, float)) and 8 <= fs <= 32 else 13
         self.compact = bool(cfg.get('compact_display', False))
         self.whole_word = bool(cfg.get('whole_word', False))
+        ef = cfg.get('entry_filter', 'all')
+        self.entry_filter = ef if ef in ('all', 'files', 'folders') else 'all'
 
     def _save_config(self):
         try:
@@ -301,6 +304,7 @@ class FileSearchWindow(QMainWindow):
                 'folder_history': self.folder_history[:10],
                 'compact_display': self.compact_check.isChecked(),
                 'whole_word': self.whole_word_check.isChecked(),
+                'entry_filter': self._entry_filter_value(),
                 'font_size': self.font_size,
                 'language': self.language,
             }
@@ -347,7 +351,7 @@ class FileSearchWindow(QMainWindow):
         self.folder_combo.setInsertPolicy(QComboBox.NoInsert)
         self.folder_combo.addItems(self.folder_history)
         self.folder_combo.setCurrentText(self.last_folder)
-        self.folder_combo.lineEdit().returnPressed.connect(self.start_or_cancel_search)
+        self.folder_combo.lineEdit().returnPressed.connect(self.start_search_now)
         grid.addWidget(self.folder_combo, 0, 1)
         self.browse_button = QPushButton()
         self.browse_button.clicked.connect(self.browse_folder)
@@ -359,7 +363,7 @@ class FileSearchWindow(QMainWindow):
         self.search_combo.setInsertPolicy(QComboBox.NoInsert)
         self.search_combo.addItems(self.search_history)
         self.search_combo.setCurrentText("")
-        self.search_combo.lineEdit().returnPressed.connect(self.start_or_cancel_search)
+        self.search_combo.lineEdit().returnPressed.connect(self.start_search_now)
         grid.addWidget(self.search_combo, 1, 1)
         self.search_button = QPushButton(objectName="accent")
         self.search_button.clicked.connect(self.start_or_cancel_search)
@@ -385,6 +389,16 @@ class FileSearchWindow(QMainWindow):
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.all_radio)
         self.mode_group.addButton(self.any_radio)
+        # 结果类型：全部 / 仅文件 / 仅文件夹
+        self.entry_all_radio = QRadioButton()
+        self.entry_files_radio = QRadioButton()
+        self.entry_folders_radio = QRadioButton()
+        {'files': self.entry_files_radio,
+         'folders': self.entry_folders_radio}.get(
+            self.entry_filter, self.entry_all_radio).setChecked(True)
+        self.entry_group = QButtonGroup(self)
+        for w in (self.entry_all_radio, self.entry_files_radio, self.entry_folders_radio):
+            self.entry_group.addButton(w)
         self.whole_word_check = QCheckBox()
         self.whole_word_check.setChecked(self.whole_word)
         self.compact_check = QCheckBox()
@@ -394,6 +408,9 @@ class FileSearchWindow(QMainWindow):
             opts.addWidget(w)
         opts.addWidget(self._separator())
         for w in (self.all_radio, self.any_radio):
+            opts.addWidget(w)
+        opts.addWidget(self._separator())
+        for w in (self.entry_all_radio, self.entry_files_radio, self.entry_folders_radio):
             opts.addWidget(w)
         opts.addWidget(self._separator())
         opts.addWidget(self.whole_word_check)
@@ -516,6 +533,9 @@ class FileSearchWindow(QMainWindow):
         self.content_radio.setText(t('by_content'))
         self.all_radio.setText(t('match_all'))
         self.any_radio.setText(t('match_any'))
+        self.entry_all_radio.setText(t('entry_all'))
+        self.entry_files_radio.setText(t('entry_files'))
+        self.entry_folders_radio.setText(t('entry_folders'))
         self.whole_word_check.setText(t('whole_word'))
         self.whole_word_check.setToolTip(t('whole_word_tip'))
         self.compact_check.setText(t('compact'))
@@ -660,7 +680,15 @@ class FileSearchWindow(QMainWindow):
             return False
         return match_mode == "all" and all(found)
 
+    def start_search_now(self):
+        """输入框回车：始终按当前关键词立即搜索。上一次搜索还在进行时先自动取消，
+        避免「第一次回车只是取消、要按第二次才搜索」"""
+        if self.is_searching:
+            self.cancel_search()
+        self.start_or_cancel_search()
+
     def start_or_cancel_search(self):
+        # 「搜索/取消」按钮保持切换语义：搜索中点击即取消
         if self.is_searching:
             self.cancel_search()
             return
@@ -694,9 +722,17 @@ class FileSearchWindow(QMainWindow):
         thread = threading.Thread(
             target=self._search_worker,
             args=(self.search_generation, search_path,
-                  [kw.lower() for kw in keywords], search_type, match_mode, whole_word),
+                  [kw.lower() for kw in keywords], search_type, match_mode,
+                  whole_word, self._entry_filter_value()),
             daemon=True)
         thread.start()
+
+    def _entry_filter_value(self):
+        if self.entry_files_radio.isChecked():
+            return 'files'
+        if self.entry_folders_radio.isChecked():
+            return 'folders'
+        return 'all'
 
     def cancel_search(self):
         if self.is_searching:
@@ -708,7 +744,7 @@ class FileSearchWindow(QMainWindow):
             self.table.setSortingEnabled(True)
 
     def _search_worker(self, generation, search_path, keywords_lower,
-                       search_type, match_mode, whole_word):
+                       search_type, match_mode, whole_word, entry_filter):
         def active():
             return self.is_searching and self.search_generation == generation
 
@@ -752,13 +788,15 @@ class FileSearchWindow(QMainWindow):
                                 return
                             try:
                                 if entry.is_dir(follow_symlinks=False):
-                                    if search_type == "name" and self.match_keywords(
-                                            entry.name, keywords_lower, match_mode, whole_word):
+                                    if (entry_filter != 'files'
+                                            and search_type == "name"
+                                            and self.match_keywords(
+                                                entry.name, keywords_lower, match_mode, whole_word)):
                                         batch.append(make_row(
                                             entry, entry.stat(follow_symlinks=False), True))
                                         count += 1
                                     dirs.append(entry.path)
-                                elif entry.is_file(follow_symlinks=False):
+                                elif entry_filter != 'folders' and entry.is_file(follow_symlinks=False):
                                     if search_type == "name":
                                         if self.match_keywords(entry.name, keywords_lower,
                                                                match_mode, whole_word):
