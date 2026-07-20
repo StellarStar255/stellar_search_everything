@@ -60,12 +60,18 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
+    # 在 Ubuntu 22.04 容器里构建：ubuntu-latest 已是 24.04（glibc 2.39），
+    # 直接构建的二进制在 22.04（glibc 2.35）上报 GLIBC not found 起不来；
+    # 容器里以 2.35 为基线，产物在 22.04 及更新系统上都能运行
+    container: ubuntu:22.04
     steps:
-      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-venv libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0
+          apt-get update
+          apt-get install -y python3 python3-venv python3-pip binutils git \
+            libgl1 libegl1 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-shape0
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: |
           python3 -m venv .venv
