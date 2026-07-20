@@ -12,13 +12,14 @@ import datetime
 import subprocess
 import threading
 
-from PySide6.QtCore import Qt, QObject, Signal, QUrl, QMimeData
+from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
+                            QAbstractTableModel, QModelIndex)
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
                            QShortcut, QColor, QBrush)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
     QRadioButton, QCheckBox, QHBoxLayout, QVBoxLayout, QGridLayout,
-    QTableWidget, QTableWidgetItem, QMenu, QFileDialog, QMessageBox,
+    QTableView, QMenu, QFileDialog, QMessageBox,
     QHeaderView, QFrame, QAbstractItemView, QButtonGroup,
 )
 
@@ -90,11 +91,11 @@ QRadioButton::indicator:checked {{
     background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
         stop:0 {accent}, stop:0.55 {accent}, stop:0.7 {entry_bg}, stop:1 {entry_bg});
 }}
-QTableWidget {{
+QTableView {{
     background: {surface}; alternate-background-color: {stripe};
     color: {text}; border: 1px solid {border}; gridline-color: transparent;
 }}
-QTableWidget::item:selected {{ background: {accent}; color: #ffffff; }}
+QTableView::item:selected {{ background: {accent}; color: #ffffff; }}
 QHeaderView::section {{
     background: {button_bg}; color: {text}; border: none;
     border-right: 1px solid {border}; padding: 6px 8px; font-weight: bold;
@@ -124,15 +125,77 @@ def build_qss():
     )
 
 
-class SortableItem(QTableWidgetItem):
-    """按 UserRole 中的排序键比较（文件名不区分大小写、大小按字节数）"""
+class ResultsModel(QAbstractTableModel):
+    """搜索结果模型。行数据存为元组列表，排序用 Python sorted 一次完成。
+    QTableWidget 逐项存储 + Python __lt__ 逐对比较在十万行级别会卡死界面
+    数秒（约 n·log n 次跨语言调用）；模型化后排序只需零点几秒。"""
 
-    def __lt__(self, other):
-        a = self.data(Qt.UserRole)
-        b = other.data(Qt.UserRole)
-        if a is not None and b is not None:
-            return a < b
-        return super().__lt__(other)
+    SORT_KEYS = (
+        lambda r: r[0].lower(),   # 文件名（含 📁 前缀，与显示分组一致）
+        lambda r: r[1].lower(),   # 路径
+        lambda r: r[4],           # 大小（字节数，文件夹为 -1）
+        lambda r: r[5],           # 修改日期（格式固定，字符串序即时间序）
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 行元组: (显示名, 父目录, 完整路径, 大小文本, 大小字节, 修改时间, 是否文件夹)
+        self.rows = []
+        self.headers = ["", "", "", ""]
+        self._folder_brush = QBrush(QColor(FOLDER_FG))
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.rows)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 4
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        r = self.rows[index.row()]
+        col = index.column()
+        if role == Qt.DisplayRole:
+            return (r[0], r[1], r[3], r[5])[col]
+        if role == Qt.ForegroundRole and r[6]:
+            return self._folder_brush
+        if role == Qt.TextAlignmentRole and col == 2:
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+        if role == Qt.ToolTipRole:
+            # 名字被省略显示时悬停可见全名；其余列显示完整路径
+            return r[0] if col == 0 else r[2]
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self.headers[section]
+        return None
+
+    def set_headers(self, headers):
+        self.headers = list(headers)
+        self.headerDataChanged.emit(Qt.Horizontal, 0, len(self.headers) - 1)
+
+    def append_rows(self, rows):
+        start = len(self.rows)
+        self.beginInsertRows(QModelIndex(), start, start + len(rows) - 1)
+        self.rows.extend(rows)
+        self.endInsertRows()
+
+    def clear(self):
+        self.beginResetModel()
+        self.rows = []
+        self.endResetModel()
+
+    def path_at(self, row):
+        return self.rows[row][2]
+
+    def sort(self, column, order=Qt.AscendingOrder):
+        if not self.rows or not 0 <= column < 4:
+            return
+        self.layoutAboutToBeChanged.emit()
+        self.rows.sort(key=self.SORT_KEYS[column],
+                       reverse=(order == Qt.DescendingOrder))
+        self.layoutChanged.emit()
 
 
 class SearchSignals(QObject):
@@ -299,7 +362,9 @@ class FileSearchWindow(QMainWindow):
         self.result_label = QLabel()
         outer.addWidget(self.result_label)
 
-        self.table = QTableWidget(0, 4)
+        self.results_model = ResultsModel(self)
+        self.table = QTableView()
+        self.table.setModel(self.results_model)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -406,7 +471,7 @@ class FileSearchWindow(QMainWindow):
         self.compact_check.setText(t('compact'))
         self.result_label.setText(t('results'))
         self.font_label.setText(t('font'))
-        self.table.setHorizontalHeaderLabels(
+        self.results_model.set_headers(
             [t('col_name'), t('col_path'), t('col_size'), t('col_date')])
         self.act_open.setText(t('open_file'))
         self.act_open_folder.setText(t('open_containing'))
@@ -567,7 +632,7 @@ class FileSearchWindow(QMainWindow):
         self._save_config()
 
         self.table.setSortingEnabled(False)
-        self.table.setRowCount(0)
+        self.results_model.clear()
         self.is_searching = True
         self.search_generation += 1
         self.search_button.setText(self.t('cancel'))
@@ -686,29 +751,7 @@ class FileSearchWindow(QMainWindow):
     def _add_batch(self, generation, rows):
         if generation != self.search_generation:
             return  # 已取消/已重启的旧搜索残留结果
-        table = self.table
-        start = table.rowCount()
-        table.setRowCount(start + len(rows))
-        for i, (name, parent, path, size_str, size_bytes, mtime, is_folder) in enumerate(rows):
-            row = start + i
-            name_item = SortableItem(name)
-            name_item.setData(Qt.UserRole, name.lower())
-            name_item.setData(Qt.UserRole + 1, path)  # 完整路径存在数据里，不再需要隐藏列
-            name_item.setToolTip(name)  # 名字被省略显示（“…”）时悬停可见全名
-            path_item = SortableItem(parent)
-            path_item.setData(Qt.UserRole, parent.lower())
-            path_item.setToolTip(path)
-            size_item = SortableItem(size_str)
-            size_item.setData(Qt.UserRole, size_bytes)
-            size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            mtime_item = SortableItem(mtime)
-            mtime_item.setData(Qt.UserRole, mtime)
-            items = (name_item, path_item, size_item, mtime_item)
-            folder_brush = QBrush(QColor(FOLDER_FG)) if is_folder else None
-            for col, item in enumerate(items):
-                if folder_brush:
-                    item.setForeground(folder_brush)
-                table.setItem(row, col, item)
+        self.results_model.append_rows(rows)
 
     def _on_progress(self, generation, count):
         if generation != self.search_generation:
@@ -735,16 +778,11 @@ class FileSearchWindow(QMainWindow):
     # ---------- 结果操作 ----------
 
     def _selected_paths(self):
-        rows = sorted({index.row() for index in self.table.selectedIndexes()})
-        paths = []
-        for row in rows:
-            item = self.table.item(row, 0)
-            if item:
-                paths.append(item.data(Qt.UserRole + 1))
-        return paths
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        return [self.results_model.path_at(row) for row in rows]
 
     def _show_context_menu(self, pos):
-        if self.table.itemAt(pos):
+        if self.table.indexAt(pos).isValid():
             self.context_menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def open_selected_file(self):
