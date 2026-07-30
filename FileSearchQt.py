@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.10"
+APP_VERSION = "1.6.11"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -596,6 +596,12 @@ class FileSearchWindow(QMainWindow):
             self._show_main_window()
 
     def eventFilter(self, obj, event):
+        # macOS Dock 菜单「退出」/Cmd+Q 会走 QEvent.Quit → 关闭所有窗口的流程；
+        # 若不先标记真正退出，closeEvent 会把这次关闭当成「最小化到任务栏」
+        # 而 ignore 掉，Qt 随即取消整个退出，导致 Dock 退出无效
+        if event.type() == QEvent.Quit:
+            self._really_quitting = True
+            self.is_searching = False
         # macOS 点 Dock 图标重新激活时，若主窗口已隐藏则重新显示
         if event.type() == QEvent.ApplicationActivate and not self.isVisible():
             self._show_main_window()
