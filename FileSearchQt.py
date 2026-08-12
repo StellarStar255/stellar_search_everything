@@ -28,7 +28,15 @@ from PySide6.QtWidgets import (
 
 from translations import TRANSLATIONS
 
-APP_VERSION = "1.6.11"
+
+class NoWheelComboBox(QComboBox):
+    """滚轮悬停时会切换历史记录条目，极易误操作，故屏蔽滚轮事件。"""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+APP_VERSION = "1.6.12"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -406,7 +414,7 @@ class FileSearchWindow(QMainWindow):
 
         self.folder_label = QLabel()
         grid.addWidget(self.folder_label, 0, 0, Qt.AlignRight)
-        self.folder_combo = QComboBox(editable=True)
+        self.folder_combo = NoWheelComboBox(editable=True)
         self.folder_combo.setInsertPolicy(QComboBox.NoInsert)
         self.folder_combo.addItems(self.folder_history)
         self.folder_combo.setCurrentText(self.last_folder)
@@ -418,7 +426,7 @@ class FileSearchWindow(QMainWindow):
 
         self.search_label = QLabel()
         grid.addWidget(self.search_label, 1, 0, Qt.AlignRight)
-        self.search_combo = QComboBox(editable=True)
+        self.search_combo = NoWheelComboBox(editable=True)
         self.search_combo.setInsertPolicy(QComboBox.NoInsert)
         self.search_combo.addItems(self.search_history)
         self.search_combo.setCurrentText("")
