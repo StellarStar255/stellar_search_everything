@@ -13,7 +13,8 @@ tag 推送后 CI 会自动提取该小节作为 GitHub Release 的说明。
 
 ### 📦 打包
 
-- **macOS 安装包改为 Developer ID 正式签名**，不再是无签名构建
+- **macOS 安装包改为 Developer ID 正式签名并通过 Apple 公证（notarized + stapled）**，
+  下载后首次打开不再出现 Gatekeeper 拦截提示
 
 ## [1.6.11] - 2026-07-30
 
