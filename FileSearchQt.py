@@ -18,22 +18,99 @@ from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
                             QAbstractTableModel, QModelIndex, QTimer, QEvent)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
-                           QShortcut, QColor, QBrush)
+                           QShortcut, QColor, QBrush, QPen, QPainter)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
     QRadioButton, QCheckBox, QHBoxLayout, QVBoxLayout, QGridLayout,
     QTableView, QMenu, QFileDialog, QMessageBox,
     QFrame, QAbstractItemView, QButtonGroup, QSystemTrayIcon,
+    QStyledItemDelegate, QStyleOptionViewItem, QStyle,
 )
 
 from translations import TRANSLATIONS
 
 
+class HistoryItemDelegate(QStyledItemDelegate):
+    """历史下拉项：右侧画一个 ×，点击即从历史中删除；过长路径中间省略，不压住 ×"""
+
+    CLOSE_W = 28
+
+    @classmethod
+    def close_rect(cls, rect):
+        return rect.adjusted(rect.width() - cls.CLOSE_W, 0, 0, 0)
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = opt.fontMetrics.elidedText(
+            opt.text, Qt.ElideMiddle, max(0, opt.rect.width() - self.CLOSE_W - 12))
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+
+        active = option.state & (QStyle.State_MouseOver | QStyle.State_Selected)
+        c = self.close_rect(option.rect).center()
+        d = 4
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor(TEXT if active else MUTED), 1.6,
+                            Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(c.x() - d, c.y() - d, c.x() + d, c.y() + d)
+        painter.drawLine(c.x() - d, c.y() + d, c.x() + d, c.y() - d)
+        painter.restore()
+
+
 class NoWheelComboBox(QComboBox):
     """滚轮悬停时会切换历史记录条目，极易误操作，故屏蔽滚轮事件。
-    上下方向键同理不再切换历史条目：↓ 改为跳到结果列表（down_pressed）。"""
+    上下方向键同理不再切换历史条目：↓ 改为跳到结果列表（down_pressed）。
+    下拉历史项可删除：点右侧 ×，或选中后按 Delete / Backspace（remove_requested）。"""
 
     down_pressed = Signal()
+    remove_requested = Signal(str)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setItemDelegate(HistoryItemDelegate(self))
+        view = self.view()
+        view.setMouseTracking(True)
+        view.setTextElideMode(Qt.ElideMiddle)
+        # view() 已创建弹出容器并装好它的过滤器；后装的过滤器先执行，
+        # 这样点 × 能抢在“点击即选中并收起下拉”之前拦下
+        view.viewport().installEventFilter(self)
+        view.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        view = self.view()
+        etype = event.type()
+        if obj is view.viewport() and etype in (
+                QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                QEvent.MouseButtonDblClick):
+            pos = event.position().toPoint()
+            index = view.indexAt(pos)
+            if index.isValid() and HistoryItemDelegate.close_rect(
+                    view.visualRect(index)).contains(pos):
+                if etype == QEvent.MouseButtonRelease:
+                    self._request_remove(index.row())
+                return True
+        if (obj is view and etype == QEvent.KeyPress
+                and event.key() in (Qt.Key_Delete, Qt.Key_Backspace)):
+            index = view.currentIndex()
+            if index.isValid():
+                self._request_remove(index.row())
+            return True
+        return super().eventFilter(obj, event)
+
+    def _request_remove(self, row):
+        self._reopen_row = row
+        self.hidePopup()
+        self.remove_requested.emit(self.itemText(row))
+        # 重新弹出以按剩余条目数调整下拉高度，并停在原位置方便连续删除
+        if self.count():
+            QTimer.singleShot(0, self._reopen_popup)
+
+    def _reopen_popup(self):
+        self.showPopup()
+        self.view().setCurrentIndex(
+            self.model().index(min(self._reopen_row, self.count() - 1), 0))
 
     def wheelEvent(self, event):
         event.ignore()
@@ -76,7 +153,7 @@ class ResultsTable(QTableView):
         super().keyPressEvent(event)
 
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -520,6 +597,8 @@ class FileSearchWindow(QMainWindow):
         self.folder_combo.lineEdit().returnPressed.connect(self.request_search)
         self.folder_combo.textActivated.connect(self._on_folder_activated)
         self.folder_combo.down_pressed.connect(self.focus_results)
+        self.folder_combo.remove_requested.connect(
+            lambda v: self._forget(self.folder_combo, self.folder_history, v))
         self.folder_combo.lineEdit().setAcceptDrops(False)  # 拖入文件夹交给主窗口处理
         grid.addWidget(self.folder_combo, 0, 1)
         self.browse_button = QPushButton()
@@ -537,6 +616,8 @@ class FileSearchWindow(QMainWindow):
         self.search_combo.textActivated.connect(self.request_search)
         self.search_combo.lineEdit().textEdited.connect(self._live_timer_start)
         self.search_combo.down_pressed.connect(self.focus_results)
+        self.search_combo.remove_requested.connect(
+            lambda v: self._forget(self.search_combo, self.search_history, v))
         self.search_combo.lineEdit().setAcceptDrops(False)
         grid.addWidget(self.search_combo, 1, 1)
         self.search_button = QPushButton(objectName="accent")
@@ -865,6 +946,13 @@ class FileSearchWindow(QMainWindow):
             self.folder_history = self._remember(self.folder_history, folder)
             self._refresh_combo(self.folder_combo, self.folder_history, folder)
             self._save_config()
+
+    def _forget(self, combo, history, value):
+        """从历史中删除一项；输入框里当前的文字保持不变"""
+        if value in history:
+            history.remove(value)
+        self._refresh_combo(combo, history, combo.currentText())
+        self._save_config()
 
     def _refresh_combo(self, combo, items, current):
         combo.blockSignals(True)
