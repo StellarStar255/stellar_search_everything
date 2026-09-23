@@ -55,7 +55,20 @@ echo "==> [5/6] Staple 公证票据"
 xcrun stapler staple "$WORK_DIR/$DMG_NAME"
 spctl --assess --type open --context context:primary-signature -v "$WORK_DIR/$DMG_NAME"
 
+# 先把成品拷出工作目录：上传失败时不必重新构建 + 公证
+cp "$WORK_DIR/$DMG_NAME" "/tmp/$DMG_NAME"
+echo "已签名 DMG: /tmp/$DMG_NAME"
+
 echo "==> [6/6] 替换 Release 上的 DMG"
-gh release upload "$TAG" "$WORK_DIR/$DMG_NAME" --clobber
+# 不用 `gh release upload --clobber`：Release 刚创建时按 tag 查询的资产列表可能
+# 长时间为空（GitHub 缓存），--clobber 找不到旧 DMG，上传同名文件即报 422。
+# 改为按 Release ID 查到旧 DMG 并删除后再上传
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+REL_ID=$(gh api "repos/$REPO/releases" --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -1)
+for ASSET_ID in $(gh api "repos/$REPO/releases/$REL_ID/assets" \
+    --jq ".[] | select(.name==\"$DMG_NAME\") | .id"); do
+  gh api -X DELETE "repos/$REPO/releases/assets/$ASSET_ID"
+done
+gh release upload "$TAG" "/tmp/$DMG_NAME"
 
 echo "完成: $TAG 的 macOS DMG 已签名 + 公证并上传"
