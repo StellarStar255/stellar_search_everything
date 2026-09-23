@@ -26,6 +26,7 @@ python3 -m PyInstaller --noconfirm --windowed --name "$APP_NAME" \
   --icon "$REPO_DIR/assets/AppIcon.icns" \
   --add-data "$REPO_DIR/assets/icon.png:assets" \
   --add-data "$REPO_DIR/assets/check.svg:assets" \
+  --add-data "$REPO_DIR/assets/chevron.svg:assets" \
   --distpath "$WORK_DIR/dist" --workpath "$WORK_DIR/build" \
   --specpath "$WORK_DIR" FileSearchQt.py
 APP="$WORK_DIR/dist/$APP_NAME.app"

@@ -23,20 +23,60 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
     QRadioButton, QCheckBox, QHBoxLayout, QVBoxLayout, QGridLayout,
     QTableView, QMenu, QFileDialog, QMessageBox,
-    QHeaderView, QFrame, QAbstractItemView, QButtonGroup, QSystemTrayIcon,
+    QFrame, QAbstractItemView, QButtonGroup, QSystemTrayIcon,
 )
 
 from translations import TRANSLATIONS
 
 
 class NoWheelComboBox(QComboBox):
-    """滚轮悬停时会切换历史记录条目，极易误操作，故屏蔽滚轮事件。"""
+    """滚轮悬停时会切换历史记录条目，极易误操作，故屏蔽滚轮事件。
+    上下方向键同理不再切换历史条目：↓ 改为跳到结果列表（down_pressed）。"""
+
+    down_pressed = Signal()
 
     def wheelEvent(self, event):
         event.ignore()
 
+    def keyPressEvent(self, event):
+        if (event.key() in (Qt.Key_Up, Qt.Key_Down)
+                and not event.modifiers() & Qt.AltModifier):
+            if event.key() == Qt.Key_Down:
+                self.down_pressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
-APP_VERSION = "1.6.12"
+
+class ResultsTable(QTableView):
+    """结果表格的键盘操作：回车打开、Cmd/Ctrl+回车定位、Cmd/Ctrl+C 复制路径、
+    macOS 空格快速预览、首行再按 ↑ 回到搜索框。"""
+
+    activate = Signal()
+    reveal = Signal()
+    preview = Signal()
+    copy_paths = Signal()
+    leave_top = Signal()
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        mods = event.modifiers()
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            (self.reveal if mods & Qt.ControlModifier else self.activate).emit()
+            return
+        if key == Qt.Key_Space and not mods and sys.platform == "darwin":
+            self.preview.emit()
+            return
+        if event.matches(QKeySequence.Copy):
+            self.copy_paths.emit()
+            return
+        if key == Qt.Key_Up and not mods and self.currentIndex().row() <= 0:
+            self.leave_top.emit()
+            return
+        super().keyPressEvent(event)
+
+
+APP_VERSION = "1.7.0"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -135,6 +175,34 @@ BUTTON_BG = "#3a3d42"
 BUTTON_HOVER = "#4a4e57"
 FOLDER_FG = "#8ab4f8"
 
+# 「跳过依赖/缓存目录」开启时不进入的目录：体量大、几乎从不是搜索目标，
+# 却会让搜索慢上几个数量级（一个 node_modules 动辄数十万文件）
+SKIP_DIR_NAMES = frozenset({
+    ".git", ".svn", ".hg", "node_modules", "__pycache__", ".venv", "venv",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".gradle",
+    ".idea", ".Trash", "$RECYCLE.BIN", "System Volume Information",
+})
+
+# 按内容搜索时直接跳过的二进制扩展名（省去打开文件；其余文件再按 NUL 字节判定）
+BINARY_EXTS = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".icns", ".webp", ".tif",
+    ".tiff", ".heic", ".psd", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg",
+    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".zip", ".gz", ".tgz", ".bz2",
+    ".xz", ".7z", ".rar", ".dmg", ".iso", ".pkg", ".deb", ".rpm", ".exe",
+    ".dll", ".so", ".dylib", ".o", ".a", ".class", ".jar", ".pyc", ".whl",
+    ".bin", ".dat", ".db", ".sqlite", ".pdf", ".doc", ".docx", ".xls",
+    ".xlsx", ".ppt", ".pptx", ".ttf", ".otf", ".woff", ".woff2", ".npy",
+    ".npz", ".pt", ".pth", ".onnx", ".safetensors", ".h5", ".parquet",
+})
+
+
+def format_size(size):
+    for unit, factor in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if size >= factor:
+            return f"{size / factor:.2f} {unit}"
+    return f"{size} B"
+
+
 QSS_TEMPLATE = """
 QMainWindow, QWidget {{ background: {bg}; color: {text}; }}
 #card {{ background: {surface}; border: 1px solid {border}; border-radius: 8px; }}
@@ -145,7 +213,14 @@ QComboBox {{
     border-radius: 6px; padding: 4px 8px;
 }}
 QComboBox:focus {{ border-color: {accent}; }}
-QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox::drop-down {{
+    subcontrol-origin: padding; subcontrol-position: center right;
+    width: 26px; border-left: 1px solid {border};
+    border-top-right-radius: 6px; border-bottom-right-radius: 6px;
+}}
+QComboBox::drop-down:hover {{ background: {button_hover}; }}
+QComboBox::down-arrow {{ image: url("{chevron_svg}"); width: 14px; height: 14px; }}
+QComboBox::down-arrow:on {{ top: 1px; }}
 QComboBox QAbstractItemView {{
     background: {entry_bg}; color: {text};
     selection-background-color: {accent}; selection-color: #ffffff;
@@ -204,11 +279,13 @@ QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 def build_qss():
     # QSS 的 url() 需要正斜杠路径（Windows 上也是）
     check_svg = resource_path(os.path.join("assets", "check.svg")).replace("\\", "/")
+    chevron_svg = resource_path(os.path.join("assets", "chevron.svg")).replace("\\", "/")
     return QSS_TEMPLATE.format(
         bg=BG, surface=SURFACE, entry_bg=ENTRY_BG, stripe=STRIPE_BG,
         border=BORDER, accent=ACCENT, accent_hover=ACCENT_HOVER,
         accent_pressed=ACCENT_PRESSED, text=TEXT, muted=MUTED,
         button_bg=BUTTON_BG, button_hover=BUTTON_HOVER, check_svg=check_svg,
+        chevron_svg=chevron_svg,
     )
 
 
@@ -276,6 +353,23 @@ class ResultsModel(QAbstractTableModel):
     def path_at(self, row):
         return self.rows[row][2]
 
+    # 拖拽：把结果行拖到 Finder / 资源管理器 / 其他应用即得到对应文件
+    def flags(self, index):
+        flags = super().flags(index)
+        return flags | Qt.ItemIsDragEnabled if index.isValid() else flags
+
+    def mimeTypes(self):
+        return ["text/uri-list"]
+
+    def mimeData(self, indexes):
+        rows = sorted({i.row() for i in indexes})
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(self.rows[r][2]) for r in rows])
+        return mime
+
+    def supportedDragActions(self):
+        return Qt.CopyAction
+
     def sort(self, column, order=Qt.AscendingOrder):
         if not self.rows or not 0 <= column < 4:
             return
@@ -288,8 +382,8 @@ class ResultsModel(QAbstractTableModel):
 class SearchSignals(QObject):
     """工作线程 → 界面线程的信号桥（Qt 信号跨线程自动排队）"""
     batch = Signal(int, list)
-    progress = Signal(int, int)
-    done = Signal(int, int, str)
+    progress = Signal(int, int, int)       # 代数, 结果数, 已扫描项数
+    done = Signal(int, int, str, int, float)  # 代数, 结果数, 匹配模式, 已扫描项数, 用时秒
     error = Signal(int, str)
 
 
@@ -314,7 +408,9 @@ class FileSearchWindow(QMainWindow):
         self.compact = False
         self.whole_word = False
         self.entry_filter = 'all'
+        self.skip_dirs = True
         self.is_searching = False
+        self._search_pending = False  # 回车与历史项 activated 同时触发时合并为一次搜索
         self.search_generation = 0  # 递增代数：旧搜索线程的残留信号按代数丢弃
         self._load_config()
 
@@ -339,6 +435,7 @@ class FileSearchWindow(QMainWindow):
 
         self.apply_language()
         self._apply_font_size()
+        self.search_combo.setFocus()  # 打开即可直接输入关键词
         # 启动 3 秒后后台静默检查更新（有新版时“检查更新”按钮变为“升级到 vX.Y.Z”）
         QTimer.singleShot(3000, lambda: self._start_update_check(manual=False))
 
@@ -362,6 +459,7 @@ class FileSearchWindow(QMainWindow):
         self.whole_word = bool(cfg.get('whole_word', False))
         ef = cfg.get('entry_filter', 'all')
         self.entry_filter = ef if ef in ('all', 'files', 'folders') else 'all'
+        self.skip_dirs = bool(cfg.get('skip_common_dirs', True))
 
     def _save_config(self):
         try:
@@ -372,6 +470,7 @@ class FileSearchWindow(QMainWindow):
                 'compact_display': self.compact_check.isChecked(),
                 'whole_word': self.whole_word_check.isChecked(),
                 'entry_filter': self._entry_filter_value(),
+                'skip_common_dirs': self.skip_dirs_check.isChecked(),
                 'font_size': self.font_size,
                 'language': self.language,
             }
@@ -418,7 +517,10 @@ class FileSearchWindow(QMainWindow):
         self.folder_combo.setInsertPolicy(QComboBox.NoInsert)
         self.folder_combo.addItems(self.folder_history)
         self.folder_combo.setCurrentText(self.last_folder)
-        self.folder_combo.lineEdit().returnPressed.connect(self.start_search_now)
+        self.folder_combo.lineEdit().returnPressed.connect(self.request_search)
+        self.folder_combo.textActivated.connect(self._on_folder_activated)
+        self.folder_combo.down_pressed.connect(self.focus_results)
+        self.folder_combo.lineEdit().setAcceptDrops(False)  # 拖入文件夹交给主窗口处理
         grid.addWidget(self.folder_combo, 0, 1)
         self.browse_button = QPushButton()
         self.browse_button.clicked.connect(self.browse_folder)
@@ -430,19 +532,28 @@ class FileSearchWindow(QMainWindow):
         self.search_combo.setInsertPolicy(QComboBox.NoInsert)
         self.search_combo.addItems(self.search_history)
         self.search_combo.setCurrentText("")
-        self.search_combo.lineEdit().returnPressed.connect(self.start_search_now)
+        # 回车立即搜索；从下拉历史里选中条目也直接搜索（两者同时触发时合并为一次）
+        self.search_combo.lineEdit().returnPressed.connect(self.request_search)
+        self.search_combo.textActivated.connect(self.request_search)
+        self.search_combo.lineEdit().textEdited.connect(self._live_timer_start)
+        self.search_combo.down_pressed.connect(self.focus_results)
+        self.search_combo.lineEdit().setAcceptDrops(False)
         grid.addWidget(self.search_combo, 1, 1)
         self.search_button = QPushButton(objectName="accent")
         self.search_button.clicked.connect(self.start_or_cancel_search)
         grid.addWidget(self.search_button, 1, 2)
 
         self.hint_label = QLabel(objectName="hint")
+        self.hint_label.setWordWrap(True)
         grid.addWidget(self.hint_label, 2, 1, 1, 2)
 
-        # 选项行
+        # 选项分两行：挤在一行时窗口稍窄标签就被截断（“By Conte”“Folders O”）
         opts = QHBoxLayout()
         opts.setSpacing(10)
         card_layout.addLayout(opts)
+        opts2 = QHBoxLayout()
+        opts2.setSpacing(10)
+        card_layout.addLayout(opts2)
         self.name_radio = QRadioButton()
         self.name_radio.setChecked(True)
         self.content_radio = QRadioButton()
@@ -471,26 +582,30 @@ class FileSearchWindow(QMainWindow):
         self.compact_check = QCheckBox()
         self.compact_check.setChecked(self.compact)
         self.compact_check.toggled.connect(self._apply_row_height)
+        self.skip_dirs_check = QCheckBox()
+        self.skip_dirs_check.setChecked(self.skip_dirs)
         for w in (self.name_radio, self.content_radio):
             opts.addWidget(w)
         opts.addWidget(self._separator())
         for w in (self.all_radio, self.any_radio):
             opts.addWidget(w)
         opts.addWidget(self._separator())
-        for w in (self.entry_all_radio, self.entry_files_radio, self.entry_folders_radio):
-            opts.addWidget(w)
-        opts.addWidget(self._separator())
         opts.addWidget(self.whole_word_check)
-        opts.addWidget(self._separator())
-        opts.addWidget(self.compact_check)
         opts.addStretch(1)
+        for w in (self.entry_all_radio, self.entry_files_radio, self.entry_folders_radio):
+            opts2.addWidget(w)
+        opts2.addWidget(self._separator())
+        opts2.addWidget(self.skip_dirs_check)
+        opts2.addWidget(self._separator())
+        opts2.addWidget(self.compact_check)
+        opts2.addStretch(1)
 
         # 结果区
         self.result_label = QLabel()
         outer.addWidget(self.result_label)
 
         self.results_model = ResultsModel(self)
-        self.table = QTableView()
+        self.table = ResultsTable()
         self.table.setModel(self.results_model)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -511,7 +626,25 @@ class FileSearchWindow(QMainWindow):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.doubleClicked.connect(lambda _: self.open_selected_file())
+        self.table.activate.connect(self.open_selected_file)
+        self.table.reveal.connect(self.open_containing_folder)
+        self.table.preview.connect(self.quick_look)
+        self.table.copy_paths.connect(self.copy_file_path)
+        self.table.leave_top.connect(self.focus_search)
+        # 结果可直接拖到 Finder / 资源管理器 / 聊天窗口等
+        self.table.setDragEnabled(True)
+        self.table.setDragDropMode(QAbstractItemView.DragOnly)
         outer.addWidget(self.table, 1)
+
+        # 按文件名搜索时边输入边搜索（防抖）；搜索选项变化时也按新条件刷新
+        self._live_timer = QTimer(self, singleShot=True, interval=300)
+        self._live_timer.timeout.connect(self._live_search)
+        for group in (self.type_group, self.mode_group, self.entry_group):
+            group.buttonToggled.connect(self._on_option_changed)
+        self.whole_word_check.toggled.connect(self._on_option_changed)
+        self.skip_dirs_check.toggled.connect(self._on_option_changed)
+        # 把文件夹拖进窗口即设为搜索文件夹
+        self.setAcceptDrops(True)
 
         # 状态栏
         sb = self.statusBar()
@@ -563,6 +696,9 @@ class FileSearchWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+="), self, lambda: self.change_font_size(1))
         QShortcut(QKeySequence.ZoomOut, self, lambda: self.change_font_size(-1))
         QShortcut(QKeySequence(Qt.Key_Escape), self, self.cancel_search)
+        # Cmd/Ctrl+F、Cmd/Ctrl+L：回到搜索框并全选，直接输入新关键词
+        QShortcut(QKeySequence.Find, self, self.focus_search)
+        QShortcut(QKeySequence("Ctrl+L"), self, self.focus_search)
 
         # 系统托盘：关闭主窗口后驻留后台（macOS 显示在菜单栏右上角）
         self.tray_menu = QMenu(self)
@@ -646,7 +782,9 @@ class FileSearchWindow(QMainWindow):
         self.browse_button.setText(t('browse'))
         self.search_label.setText(t('search_keywords'))
         self.search_button.setText(t('cancel') if self.is_searching else t('search'))
-        self.hint_label.setText(t('hint'))
+        mod = "⌘" if sys.platform == "darwin" else "Ctrl"
+        extra = t('hint_quicklook') if sys.platform == "darwin" else ""
+        self.hint_label.setText(t('hint_qt', mod=mod, extra=extra))
         self.name_radio.setText(t('by_name'))
         self.content_radio.setText(t('by_content'))
         self.all_radio.setText(t('match_all'))
@@ -656,8 +794,11 @@ class FileSearchWindow(QMainWindow):
         self.entry_folders_radio.setText(t('entry_folders'))
         self.whole_word_check.setText(t('whole_word'))
         self.whole_word_check.setToolTip(t('whole_word_tip'))
+        self.skip_dirs_check.setText(t('skip_dirs'))
+        self.skip_dirs_check.setToolTip(
+            t('skip_dirs_tip', dirs=", ".join(sorted(SKIP_DIR_NAMES, key=str.lower))))
         self.compact_check.setText(t('compact'))
-        self.result_label.setText(t('results'))
+        self._update_result_label()
         self.font_label.setText(t('font'))
         self.results_model.set_headers(
             [t('col_name'), t('col_path'), t('col_size'), t('col_date')])
@@ -768,12 +909,18 @@ class FileSearchWindow(QMainWindow):
     @classmethod
     def content_matches(cls, path, keywords_lower, match_mode, file_size=None,
                         chunk_size=4 * 1024 * 1024, whole_word=False):
-        if file_size is not None and file_size <= chunk_size:
-            try:
-                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    return cls.match_keywords(f.read(), keywords_lower, match_mode, whole_word)
-            except Exception:
-                return False
+        # 开头 8KB 含 NUL 字节即视为二进制文件（与 grep 的判定一致）：
+        # 二进制文件按 UTF-8 忽略错误解码既慢又容易出现无意义的误命中
+        try:
+            with open(path, 'rb') as f:
+                head = f.read(8192)
+                if b'\0' in head:
+                    return False
+                if file_size is not None and file_size <= chunk_size:
+                    text = (head + f.read()).decode('utf-8', errors='ignore')
+                    return cls.match_keywords(text, keywords_lower, match_mode, whole_word)
+        except Exception:
+            return False
         found = [False] * len(keywords_lower)
         # 全词模式 tail 多留一个字符，保证跨块命中重扫时能看到前一个字符判定词边界
         overlap = max(len(kw) for kw in keywords_lower) + (1 if whole_word else -1)
@@ -798,37 +945,80 @@ class FileSearchWindow(QMainWindow):
             return False
         return match_mode == "all" and all(found)
 
+    def request_search(self, *_):
+        """回车 / 选中历史项：立即按当前关键词搜索。编辑框回车时 QComboBox 若在历史里
+        找到同名条目还会再发一次 activated，这里延到下一轮事件循环合并成一次"""
+        if not self._search_pending:
+            self._search_pending = True
+            QTimer.singleShot(0, self._run_requested_search)
+
+    def _run_requested_search(self):
+        self._search_pending = False
+        self._live_timer.stop()
+        self._start_search(record=True)
+
     def start_search_now(self):
-        """输入框回车：始终按当前关键词立即搜索。上一次搜索还在进行时先自动取消，
-        避免「第一次回车只是取消、要按第二次才搜索」"""
-        if self.is_searching:
-            self.cancel_search()
-        self.start_or_cancel_search()
+        self.request_search()
 
     def start_or_cancel_search(self):
         # 「搜索/取消」按钮保持切换语义：搜索中点击即取消
         if self.is_searching:
             self.cancel_search()
             return
+        self._live_timer.stop()
+        self._start_search(record=True)
+
+    def _live_timer_start(self, *_):
+        self._live_timer.start()
+
+    def _on_option_changed(self, *_):
+        # 选项变化后，若已有关键词则按新条件刷新（按内容搜索较慢，仍需手动回车）
+        if self.search_combo.currentText().strip():
+            self._live_timer.start()
+
+    def _live_search(self):
+        """边输入边搜索：仅按文件名模式（按内容太重）。不写入历史，
+        不弹对话框；关键词清空时清掉结果"""
+        if not self.name_radio.isChecked():
+            return
+        if not self.parse_search_terms(self.search_combo.currentText()):
+            self._stop_current_search()
+            self.results_model.clear()
+            self._update_result_label()
+            self.status_label.setText(self.t('ready'))
+            return
+        if os.path.isdir(self.folder_combo.currentText().strip()):
+            self._start_search(record=False)
+
+    def _start_search(self, record):
+        """开始一次新搜索（进行中的旧搜索直接作废）。record=True 为用户显式搜索：
+        校验失败给出提示并写入历史；边输入边搜索时 record=False，静默进行"""
         search_path = self.folder_combo.currentText().strip()
         search_text = self.search_combo.currentText()
-        if not os.path.isdir(search_path):
-            QMessageBox.critical(self, self.t('error'),
-                                 self.t('invalid_folder', path=search_path))
-            return
         keywords = self.parse_search_terms(search_text)
+        if not os.path.isdir(search_path):
+            if record:
+                self.status_label.setText(self.t('invalid_folder', path=search_path))
+                self.folder_combo.setFocus()
+                self.folder_combo.lineEdit().selectAll()
+            return
         if not keywords:
-            QMessageBox.warning(self, self.t('warning'), self.t('enter_keywords'))
+            if record:
+                self.status_label.setText(self.t('enter_keywords'))
+                self.focus_search()
             return
 
-        self.search_history = self._remember(self.search_history, search_text)
-        self._refresh_combo(self.search_combo, self.search_history, search_text)
-        self.folder_history = self._remember(self.folder_history, search_path)
-        self._refresh_combo(self.folder_combo, self.folder_history, search_path)
-        self._save_config()
+        if record:
+            self.search_history = self._remember(self.search_history, search_text)
+            self._refresh_combo(self.search_combo, self.search_history, search_text)
+            self.folder_history = self._remember(self.folder_history, search_path)
+            self._refresh_combo(self.folder_combo, self.folder_history, search_path)
+            self._save_config()
 
+        self._stop_current_search()
         self.table.setSortingEnabled(False)
         self.results_model.clear()
+        self._update_result_label()
         self.is_searching = True
         self.search_generation += 1
         self.search_button.setText(self.t('cancel'))
@@ -836,12 +1026,12 @@ class FileSearchWindow(QMainWindow):
 
         search_type = "name" if self.name_radio.isChecked() else "content"
         match_mode = "all" if self.all_radio.isChecked() else "any"
-        whole_word = self.whole_word_check.isChecked()
         thread = threading.Thread(
             target=self._search_worker,
             args=(self.search_generation, search_path,
                   [kw.lower() for kw in keywords], search_type, match_mode,
-                  whole_word, self._entry_filter_value()),
+                  self.whole_word_check.isChecked(), self._entry_filter_value(),
+                  self.skip_dirs_check.isChecked()),
             daemon=True)
         thread.start()
 
@@ -852,41 +1042,42 @@ class FileSearchWindow(QMainWindow):
             return 'folders'
         return 'all'
 
-    def cancel_search(self):
+    def _stop_current_search(self):
+        """作废进行中的搜索：已排队但尚未送达的结果批次按代数丢弃"""
         if self.is_searching:
             self.is_searching = False
-            # 作废本次搜索：已排队但尚未送达的结果批次不得在恢复排序后再插入表格
             self.search_generation += 1
             self.search_button.setText(self.t('search'))
-            self.status_label.setText(self.t('search_cancelled'))
             self.table.setSortingEnabled(True)
 
+    def cancel_search(self):
+        if self.is_searching:
+            self._stop_current_search()
+            self.status_label.setText(self.t('search_cancelled'))
+
     def _search_worker(self, generation, search_path, keywords_lower,
-                       search_type, match_mode, whole_word, entry_filter):
+                       search_type, match_mode, whole_word, entry_filter, skip_dirs):
         def active():
             return self.is_searching and self.search_generation == generation
 
         try:
+            started = time.monotonic()
             count = 0
+            scanned = 0
             batch = []
-            batch_size = 50
-            last_update = time.time()
+            batch_size = 200
+            last_update = started
             update_interval = 0.1
+            folder_label = self.t('folder_size')
 
             def make_row(entry, st, is_folder):
                 mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
                 parent = os.path.dirname(entry.path)
                 if is_folder:
                     return (f"📁 {entry.name}", parent, entry.path,
-                            self.t('folder_size'), -1, mtime, True)
-                size = st.st_size
-                if size < 1024:
-                    size_str = f"{size} B"
-                elif size < 1024 * 1024:
-                    size_str = f"{size/1024:.2f} KB"
-                else:
-                    size_str = f"{size/(1024*1024):.2f} MB"
-                return (entry.name, parent, entry.path, size_str, size, mtime, False)
+                            folder_label, -1, mtime, True)
+                return (entry.name, parent, entry.path, format_size(st.st_size),
+                        st.st_size, mtime, False)
 
             def flush():
                 nonlocal batch
@@ -894,58 +1085,61 @@ class FileSearchWindow(QMainWindow):
                     rows, batch = batch, []
                     self.signals.batch.emit(generation, rows)
 
-            def scan(path):
-                nonlocal count, last_update
+            # 显式栈代替递归：目录层级很深时递归会触发 RecursionError 导致搜索中断。
+            # 子目录逆序入栈，保持「先当前目录的文件，再逐个子目录」的深度优先顺序
+            stack = [search_path]
+            while stack:
                 if not active():
                     return
+                path = stack.pop()
                 try:
-                    with os.scandir(path) as entries:
-                        dirs = []
-                        for entry in entries:
-                            if not active():
-                                return
-                            try:
-                                if entry.is_dir(follow_symlinks=False):
-                                    if (entry_filter != 'files'
-                                            and search_type == "name"
-                                            and self.match_keywords(
-                                                entry.name, keywords_lower, match_mode, whole_word)):
-                                        batch.append(make_row(
-                                            entry, entry.stat(follow_symlinks=False), True))
-                                        count += 1
-                                    dirs.append(entry.path)
-                                elif entry_filter != 'folders' and entry.is_file(follow_symlinks=False):
-                                    if search_type == "name":
-                                        if self.match_keywords(entry.name, keywords_lower,
-                                                               match_mode, whole_word):
-                                            batch.append(make_row(
-                                                entry, entry.stat(follow_symlinks=False), False))
-                                            count += 1
-                                    else:
-                                        st = entry.stat(follow_symlinks=False)
-                                        if st.st_size <= 100 * 1024 * 1024 and self.content_matches(
-                                                entry.path, keywords_lower, match_mode, st.st_size,
-                                                whole_word=whole_word):
-                                            batch.append(make_row(entry, st, False))
-                                            count += 1
-                                now = time.time()
-                                if len(batch) >= batch_size or (now - last_update) > update_interval:
-                                    flush()
-                                    last_update = now
-                                    self.signals.progress.emit(generation, count)
-                            except (PermissionError, OSError):
-                                continue
-                        for d in dirs:
-                            if not active():
-                                return
-                            scan(d)
-                except (PermissionError, OSError):
-                    pass
+                    with os.scandir(path) as it:
+                        entries = list(it)
+                except OSError:
+                    continue
+                dirs = []
+                for entry in entries:
+                    if not active():
+                        return
+                    scanned += 1
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if (entry_filter != 'files'
+                                    and search_type == "name"
+                                    and self.match_keywords(
+                                        entry.name, keywords_lower, match_mode, whole_word)):
+                                batch.append(make_row(
+                                    entry, entry.stat(follow_symlinks=False), True))
+                                count += 1
+                            if not (skip_dirs and entry.name in SKIP_DIR_NAMES):
+                                dirs.append(entry.path)
+                        elif entry_filter != 'folders' and entry.is_file(follow_symlinks=False):
+                            if search_type == "name":
+                                if self.match_keywords(entry.name, keywords_lower,
+                                                       match_mode, whole_word):
+                                    batch.append(make_row(
+                                        entry, entry.stat(follow_symlinks=False), False))
+                                    count += 1
+                            elif os.path.splitext(entry.name)[1].lower() not in BINARY_EXTS:
+                                st = entry.stat(follow_symlinks=False)
+                                if st.st_size <= 100 * 1024 * 1024 and self.content_matches(
+                                        entry.path, keywords_lower, match_mode, st.st_size,
+                                        whole_word=whole_word):
+                                    batch.append(make_row(entry, st, False))
+                                    count += 1
+                    except OSError:
+                        pass
+                    now = time.monotonic()
+                    if len(batch) >= batch_size or (now - last_update) > update_interval:
+                        flush()
+                        last_update = now
+                        self.signals.progress.emit(generation, count, scanned)
+                stack.extend(reversed(dirs))
 
-            scan(search_path)
             flush()
             if active():
-                self.signals.done.emit(generation, count, match_mode)
+                self.signals.done.emit(generation, count, match_mode, scanned,
+                                       time.monotonic() - started)
         except Exception as e:
             self.signals.error.emit(generation, str(e))
         finally:
@@ -954,21 +1148,30 @@ class FileSearchWindow(QMainWindow):
 
     # ---------- 搜索结果（界面线程） ----------
 
+    def _update_result_label(self):
+        n = self.results_model.rowCount()
+        self.result_label.setText(
+            self.t('results_count', count=n) if n else self.t('results'))
+
     def _add_batch(self, generation, rows):
         if generation != self.search_generation:
             return  # 已取消/已重启的旧搜索残留结果
         self.results_model.append_rows(rows)
+        self._update_result_label()
 
-    def _on_progress(self, generation, count):
+    def _on_progress(self, generation, count, scanned):
         if generation != self.search_generation:
             return
-        self.status_label.setText(self.t('searching_progress', count=count))
+        self.status_label.setText(
+            self.t('searching_progress_detail', count=count, scanned=scanned))
 
-    def _on_done(self, generation, count, match_mode):
+    def _on_done(self, generation, count, match_mode, scanned, elapsed):
         if generation != self.search_generation:
             return
         mode_text = self.t('mode_all') if match_mode == "all" else self.t('mode_any')
-        self.status_label.setText(self.t('search_done', count=count, mode=mode_text))
+        self.status_label.setText(self.t(
+            'search_done_detail', count=count, mode=mode_text,
+            scanned=scanned, secs=f"{elapsed:.1f}"))
         self.search_button.setText(self.t('search'))
         self.table.setSortingEnabled(True)
 
@@ -980,6 +1183,60 @@ class FileSearchWindow(QMainWindow):
                              self.t('search_error_msg', error=message))
         self.search_button.setText(self.t('search'))
         self.table.setSortingEnabled(True)
+
+    # ---------- 焦点 / 键盘 / 拖放 ----------
+
+    def focus_search(self):
+        self._show_main_window()
+        self.search_combo.setFocus()
+        self.search_combo.lineEdit().selectAll()
+
+    def focus_results(self):
+        if not self.results_model.rowCount():
+            return
+        self.table.setFocus()
+        if not self.table.selectionModel().hasSelection():
+            self.table.selectRow(0)
+
+    def quick_look(self):
+        """macOS 快速预览（与 Finder 里按空格相同）"""
+        paths = self._selected_paths()[:20]
+        if paths:
+            subprocess.Popen(["qlmanage", "-p", *paths],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _on_folder_activated(self, _text):
+        if self.search_combo.currentText().strip():
+            self.request_search()
+
+    @staticmethod
+    def _dropped_folder(event):
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                path = url.toLocalFile()
+                if os.path.isdir(path):
+                    return path
+                if os.path.isfile(path):
+                    return os.path.dirname(path)
+        return None
+
+    def dragEnterEvent(self, event):
+        if event.source() is None and self._dropped_folder(event):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        folder = self._dropped_folder(event)
+        if not folder:
+            return
+        event.acceptProposedAction()
+        self.folder_history = self._remember(self.folder_history, folder)
+        self._refresh_combo(self.folder_combo, self.folder_history, folder)
+        self._save_config()
+        self.status_label.setText(self.t('folder_set', path=folder))
+        if self.search_combo.currentText().strip():
+            self.request_search()
+        else:
+            self.focus_search()
 
     # ---------- 一键升级 ----------
 

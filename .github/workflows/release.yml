@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pyinstaller
       - name: Build .app
-        run: pyinstaller --windowed --name "Stellar Search Everything" --icon assets/AppIcon.icns --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
+        run: pyinstaller --windowed --name "Stellar Search Everything" --icon assets/AppIcon.icns --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" --add-data "assets/chevron.svg:assets" FileSearchQt.py
       - name: Create DMG
         run: |
           mkdir dmg-staging
@@ -44,7 +44,7 @@ jobs:
       - name: Convert icns to ico
         run: python -c "from PIL import Image; Image.open('assets/AppIcon.icns').save('icon.ico', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
       - name: Build exe
-        run: pyinstaller --onefile --windowed --name StellarSearchEverything --icon icon.ico --add-data "assets/icon.png;assets" --add-data "assets/check.svg;assets" FileSearchQt.py
+        run: pyinstaller --onefile --windowed --name StellarSearchEverything --icon icon.ico --add-data "assets/icon.png;assets" --add-data "assets/check.svg;assets" --add-data "assets/chevron.svg;assets" FileSearchQt.py
       - name: Build installer (Inno Setup)
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
@@ -86,7 +86,7 @@ jobs:
           python3 -m venv .venv
           .venv/bin/pip install -r requirements.txt pyinstaller
       - name: Build binary
-        run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" FileSearchQt.py
+        run: .venv/bin/pyinstaller --onefile --windowed --name stellar-search-everything --add-data "assets/icon.png:assets" --add-data "assets/check.svg:assets" --add-data "assets/chevron.svg:assets" FileSearchQt.py
       - name: Verify bundled Qt platform plugin
         # 防止再次打出没有 xcb 插件的残包：缺了直接让构建失败
         run: |
