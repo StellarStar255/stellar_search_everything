@@ -15,7 +15,7 @@ import threading
 import urllib.request
 
 from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
-                            QAbstractTableModel, QModelIndex, QTimer, QEvent)
+                            QAbstractTableModel, QModelIndex, QTimer, QEvent, QFile)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
                            QShortcut, QColor, QBrush, QPen, QPainter)
@@ -153,7 +153,7 @@ class ResultsTable(QTableView):
         super().keyPressEvent(event)
 
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -753,11 +753,15 @@ class FileSearchWindow(QMainWindow):
         self.act_copy_path.triggered.connect(self.copy_file_path)
         self.act_copy_item = QAction(self)
         self.act_copy_item.triggered.connect(self.copy_file_or_folder)
+        self.act_delete = QAction(self)
+        self.act_delete.triggered.connect(self.delete_selected_items)
         self.context_menu.addAction(self.act_open)
         self.context_menu.addAction(self.act_open_folder)
         self.context_menu.addSeparator()
         self.context_menu.addAction(self.act_copy_path)
         self.context_menu.addAction(self.act_copy_item)
+        self.context_menu.addSeparator()
+        self.context_menu.addAction(self.act_delete)
 
         # 语言菜单：只在 macOS 挂菜单栏（原生显示在屏幕顶部），其他平台用状态栏按钮
         self.language_actions = {}
@@ -887,6 +891,7 @@ class FileSearchWindow(QMainWindow):
         self.act_open_folder.setText(t('open_containing'))
         self.act_copy_path.setText(t('copy_path'))
         self.act_copy_item.setText(t('copy_item'))
+        self.act_delete.setText(t('delete_item'))
         self.language_button.setText("EN" if self.language == 'zh' else "中文")
         if sys.platform == "darwin":
             self.language_menu.setTitle(t('menu_language'))
@@ -1505,8 +1510,69 @@ rm -f "{deb_path}" "$0"
         return [self.results_model.path_at(row) for row in rows]
 
     def _show_context_menu(self, pos):
-        if self.table.indexAt(pos).isValid():
+        index = self.table.indexAt(pos)
+        if index.isValid():
+            if not self.table.selectionModel().isRowSelected(index.row(), QModelIndex()):
+                self.table.selectRow(index.row())
             self.context_menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def delete_selected_items(self):
+        paths = list(dict.fromkeys(self._selected_paths()))
+        if not paths:
+            return
+        self._live_timer.stop()
+        dialog = QMessageBox(QMessageBox.Warning, self.t('delete_item'),
+                             self.t('delete_confirm', count=len(paths)),
+                             QMessageBox.Yes | QMessageBox.No, self)
+        dialog.setDefaultButton(QMessageBox.No)
+        dialog.setDetailedText("\n".join(paths))
+        if dialog.exec() != QMessageBox.Yes:
+            return
+
+        # 作废所有已排队的搜索信号，防止删除后旧批次又把条目加回来。
+        self._stop_current_search()
+        self.search_generation += 1
+        removed = set()
+        removed_dirs = []
+        errors = []
+
+        def normalized(path):
+            return os.path.normcase(os.path.abspath(path))
+
+        def covered(path):
+            return path in removed or any(path.startswith(d) for d in removed_dirs)
+
+        # 先处理父目录，成功后无需再单独处理其中的已选子项；不解析符号链接。
+        for path in sorted(paths, key=lambda p: len(normalized(p))):
+            key = normalized(path)
+            if covered(key):
+                continue
+            is_dir = os.path.isdir(path) and not os.path.islink(path)
+            item = QFile(path)
+            try:
+                if not item.moveToTrash():
+                    errors.append(f"{path}: {item.errorString()}")
+                    continue
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
+                continue
+            removed.add(key)
+            if is_dir:
+                removed_dirs.append(key.rstrip(os.sep) + os.sep)
+
+        model = self.results_model
+        if removed:
+            model.beginResetModel()
+            model.rows = [row for row in model.rows if not covered(normalized(row[2]))]
+            model.endResetModel()
+        self._update_result_label()
+        count = sum(covered(normalized(path)) for path in paths)
+        self.status_label.setText(self.t('delete_done', count=count, failed=len(errors)))
+        if errors:
+            message = QMessageBox(QMessageBox.Warning, self.t('warning'),
+                                  self.t('delete_failed'), QMessageBox.Ok, self)
+            message.setDetailedText("\n".join(errors))
+            message.exec()
 
     def open_selected_file(self):
         for path in self._selected_paths()[:10]:
