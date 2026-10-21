@@ -34,6 +34,9 @@ APP="$WORK_DIR/dist/$APP_NAME.app"
 echo "==> [2/6] Developer ID 签名（hardened runtime）"
 find "$APP/Contents" -type f \( -name "*.dylib" -o -name "*.so" \) \
   -exec codesign --force --timestamp --options runtime --sign "$SIGN_ID" {} +
+# Framework 主二进制通常没有扩展名；由内向外签名，覆盖 Qt/Python framework。
+find "$APP/Contents" -depth -type d -name "*.framework" \
+  -exec codesign --force --timestamp --options runtime --sign "$SIGN_ID" {} \;
 codesign --force --timestamp --options runtime \
   --entitlements "$REPO_DIR/packaging/macos/entitlements.plist" \
   --sign "$SIGN_ID" "$APP"
@@ -49,7 +52,12 @@ codesign --force --timestamp --sign "$SIGN_ID" "$WORK_DIR/$DMG_NAME"
 
 echo "==> [4/6] 提交 Apple 公证（通常几分钟）"
 xcrun notarytool submit "$WORK_DIR/$DMG_NAME" \
-  --keychain-profile "$NOTARY_PROFILE" --wait
+  --keychain-profile "$NOTARY_PROFILE" --wait --output-format json \
+  > "$WORK_DIR/notary-result.json"
+cat "$WORK_DIR/notary-result.json"
+# notarytool 在公证状态为 Invalid 时也可能返回 0，必须检查服务端状态。
+python3 -c 'import json, sys; result = json.load(open(sys.argv[1])); sys.exit(0 if result.get("status") == "Accepted" else "Apple notarization failed: " + str(result))' \
+  "$WORK_DIR/notary-result.json"
 
 echo "==> [5/6] Staple 公证票据"
 xcrun stapler staple "$WORK_DIR/$DMG_NAME"
