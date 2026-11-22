@@ -35,6 +35,23 @@ from PySide6.QtWidgets import (
 from translations import TRANSLATIONS
 
 
+def move_to_trash(path):
+    if sys.platform == 'darwin':
+        from Foundation import NSFileManager, NSURL
+
+        url = NSURL.fileURLWithPath_(os.path.abspath(path))
+        success, trashed_url, error = NSFileManager.defaultManager().trashItemAtURL_resultingItemURL_error_(
+            url, None, None)
+        if not success:
+            raise OSError(error.localizedDescription() if error else 'Unable to move item to Trash')
+        return trashed_url.path() if trashed_url else None
+
+    item = QFile(path)
+    if not item.moveToTrash():
+        raise OSError(item.errorString())
+    return item.fileName()
+
+
 class HistoryItemDelegate(QStyledItemDelegate):
     """历史下拉项：右侧画一个 ×，点击即从历史中删除；过长路径中间省略，不压住 ×"""
 
@@ -158,7 +175,7 @@ class ResultsTable(QTableView):
         super().keyPressEvent(event)
 
 
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 GITHUB_REPO = "StellarStar255/stellar_search_everything"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -1752,11 +1769,8 @@ rm -f "{deb_path}" "$0"
             if covered(key):
                 continue
             is_dir = os.path.isdir(path) and not os.path.islink(path)
-            item = QFile(path)
             try:
-                if not item.moveToTrash():
-                    errors.append(f"{path}: {item.errorString()}")
-                    continue
+                move_to_trash(path)
             except Exception as exc:
                 errors.append(f"{path}: {exc}")
                 continue

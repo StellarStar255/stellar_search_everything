@@ -1,18 +1,24 @@
 #!/bin/bash
 # 本地构建 + Developer ID 签名 + 公证 + staple，并替换 GitHub Release 上的 macOS DMG。
 #
-# 用法: ./packaging/macos/release_macos.sh v1.6.13
+# 用法: ./packaging/macos/release_macos.sh v1.7.3 [--build-only]
 #
 # 前置条件（均为一次性配置）:
 #   - 钥匙串中有 "Developer ID Application" 证书
-#   - 已配置公证凭据: xcrun notarytool store-credentials notary \
+#   - 已配置公证凭据，可用 NOTARY_PROFILE 指定名称（默认 notary）：
+#     xcrun notarytool store-credentials notary \
 #         --apple-id <AppleID邮箱> --team-id <TeamID>
-#   - 已安装 gh 并登录；对应 tag 的 Release 已由 CI 创建
+#   - 上传时需安装并登录 gh，且对应 tag 的 Release 草稿已由 CI 创建
 set -euo pipefail
 
-TAG=${1:?用法: $0 vX.Y.Z}
+TAG=${1:?用法: $0 vX.Y.Z [--build-only]}
+MODE=${2:-}
+if [[ -n "$MODE" && "$MODE" != "--build-only" ]]; then
+  echo "用法: $0 vX.Y.Z [--build-only]" >&2
+  exit 2
+fi
 SIGN_ID="Developer ID Application: Qiliang Huang (3QCL9WNFBB)"
-NOTARY_PROFILE="notary"
+NOTARY_PROFILE="${NOTARY_PROFILE:-notary}"
 APP_NAME="Stellar Search Everything"
 DMG_NAME="StellarSearchEverything-${TAG}-macos-arm64.dmg"
 
@@ -66,6 +72,9 @@ spctl --assess --type open --context context:primary-signature -v "$WORK_DIR/$DM
 # 先把成品拷出工作目录：上传失败时不必重新构建 + 公证
 cp "$WORK_DIR/$DMG_NAME" "/tmp/$DMG_NAME"
 echo "已签名 DMG: /tmp/$DMG_NAME"
+if [[ "$MODE" == "--build-only" ]]; then
+  exit 0
+fi
 
 echo "==> [6/6] 替换 Release 上的 DMG"
 # 不用 `gh release upload --clobber`：Release 刚创建时按 tag 查询的资产列表可能
@@ -73,6 +82,10 @@ echo "==> [6/6] 替换 Release 上的 DMG"
 # 改为按 Release ID 查到旧 DMG 并删除后再上传
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 REL_ID=$(gh api "repos/$REPO/releases" --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -1)
+if [[ -z "$REL_ID" ]]; then
+  echo "找不到 $TAG 的 Release 草稿" >&2
+  exit 1
+fi
 for ASSET_ID in $(gh api "repos/$REPO/releases/$REL_ID/assets" \
     --jq ".[] | select(.name==\"$DMG_NAME\") | .id"); do
   gh api -X DELETE "repos/$REPO/releases/assets/$ASSET_ID"

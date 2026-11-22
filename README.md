@@ -31,5 +31,7 @@ python3 FileSearchGUI.py
 
 ## 发布
 
-推送 `v*` tag 即触发 CI 构建 macOS/Windows/Linux 三平台安装包并创建 GitHub Release，
-Release 说明自动取自 `CHANGELOG.md` 中对应版本的小节。
+推送 `v*` tag 会触发 CI 构建 macOS、Windows 和 Linux 安装包，并创建 GitHub Release 草稿。
+发布说明取自 `CHANGELOG.md` 中对应版本的小节。用
+`packaging/macos/release_macos.sh` 将草稿中的 macOS DMG 替换为签名、公证后的版本，
+核对三份安装包后发布草稿。

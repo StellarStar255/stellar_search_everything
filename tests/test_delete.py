@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-from PySide6.QtCore import QFile, QItemSelectionModel, Qt, QTimer
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from FileSearchQt import FileSearchWindow, ResultsModel
@@ -47,20 +47,15 @@ class DeleteTests(unittest.TestCase):
         trash = self.root / '.test-trash'
         trash.mkdir(exist_ok=True)
 
-        def move(item):
-            path = Path(item.fileName())
+        def move(path):
+            path = Path(path)
             if path in fail:
-                return False
+                raise OSError('Test trash failure')
             path.rename(trash / path.name)
-            return True
-
-        class TestFile(QFile):
-            def moveToTrash(self):
-                return move(self)
 
         with patch.object(self.window, '_selected_paths', return_value=list(map(str, paths))), \
                 patch.object(QMessageBox, 'exec', return_value=answer), \
-                patch('FileSearchQt.QFile', side_effect=TestFile) as operation:
+                patch('FileSearchQt.move_to_trash', side_effect=move) as operation:
             self.window.delete_selected_items()
             return operation.call_count
 

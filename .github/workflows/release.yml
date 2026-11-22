@@ -153,6 +153,8 @@ jobs:
           fi
       - uses: softprops/action-gh-release@v3
         with:
+          # Keep the release private until the notarized macOS DMG is uploaded.
+          draft: true
           files: artifacts/*
           body_path: release_notes.md
           generate_release_notes: true
