@@ -4,8 +4,11 @@
 配置文件（~/.file_search_config.json）与 Tk 版完全兼容。
 """
 import os
+import codecs
+import io
 import re
 import sys
+import stat
 import json
 import time
 import datetime
@@ -13,6 +16,8 @@ import tempfile
 import subprocess
 import threading
 import urllib.request
+from collections import Counter
+from contextlib import closing
 
 from PySide6.QtCore import (Qt, QObject, Signal, QUrl, QMimeData,
                             QAbstractTableModel, QModelIndex, QTimer, QEvent, QFile)
@@ -20,7 +25,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import (QIcon, QAction, QActionGroup, QFont, QKeySequence,
                            QShortcut, QColor, QBrush, QPen, QPainter)
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
+    QApplication, QMainWindow, QWidget, QLabel, QComboBox, QLineEdit, QPushButton,
     QRadioButton, QCheckBox, QHBoxLayout, QVBoxLayout, QGridLayout,
     QTableView, QMenu, QFileDialog, QMessageBox,
     QFrame, QAbstractItemView, QButtonGroup, QSystemTrayIcon,
@@ -290,6 +295,11 @@ QComboBox {{
     border-radius: 6px; padding: 4px 8px;
 }}
 QComboBox:focus {{ border-color: {accent}; }}
+QLineEdit#extensionFilter {{
+    background: {entry_bg}; color: {text}; border: 1px solid {border};
+    border-radius: 6px; padding: 4px 8px;
+}}
+QLineEdit#extensionFilter:focus {{ border-color: {accent}; }}
 QComboBox::drop-down {{
     subcontrol-origin: padding; subcontrol-position: center right;
     width: 26px; border-left: 1px solid {border};
@@ -380,7 +390,7 @@ class ResultsModel(QAbstractTableModel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # 行元组: (显示名, 父目录, 完整路径, 大小文本, 大小字节, 修改时间, 是否文件夹)
+        # 行元组: (显示名, 父目录, 完整路径, 大小文本, 大小字节, 修改时间, 是否文件夹[, 命中片段])
         self.rows = []
         self.headers = ["", "", "", ""]
         self._folder_brush = QBrush(QColor(FOLDER_FG))
@@ -430,6 +440,9 @@ class ResultsModel(QAbstractTableModel):
     def path_at(self, row):
         return self.rows[row][2]
 
+    def excerpt_at(self, row):
+        return self.rows[row][7] if len(self.rows[row]) > 7 else ''
+
     # 拖拽：把结果行拖到 Finder / 资源管理器 / 其他应用即得到对应文件
     def flags(self, index):
         flags = super().flags(index)
@@ -451,8 +464,16 @@ class ResultsModel(QAbstractTableModel):
         if not self.rows or not 0 <= column < 4:
             return
         self.layoutAboutToBeChanged.emit()
+        old_indexes = self.persistentIndexList()
+        paths = [self.path_at(index.row()) for index in old_indexes]
         self.rows.sort(key=self.SORT_KEYS[column],
                        reverse=(order == Qt.DescendingOrder))
+        if old_indexes:
+            rows_by_path = {row[2]: i for i, row in enumerate(self.rows)}
+            self.changePersistentIndexList(old_indexes, [
+                self.index(rows_by_path[path], index.column())
+                for path, index in zip(paths, old_indexes)
+            ])
         self.layoutChanged.emit()
 
 
@@ -460,8 +481,83 @@ class SearchSignals(QObject):
     """工作线程 → 界面线程的信号桥（Qt 信号跨线程自动排队）"""
     batch = Signal(int, list)
     progress = Signal(int, int, int)       # 代数, 结果数, 已扫描项数
-    done = Signal(int, int, str, int, float)  # 代数, 结果数, 匹配模式, 已扫描项数, 用时秒
+    done = Signal(int, int, str, int, float, dict)
     error = Signal(int, str)
+
+
+def walk_entries(root, skip_dirs, on_error=lambda reason: None):
+    stack = [root]
+    while stack:
+        folders = []
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        is_folder = entry.is_dir(follow_symlinks=False)
+                        if is_folder and not (skip_dirs and entry.name in SKIP_DIR_NAMES):
+                            folders.append(entry.path)
+                        is_regular = is_folder or entry.is_file(follow_symlinks=False)
+                        yield entry, is_folder if is_regular else None
+                    except OSError:
+                        on_error('read')
+        except OSError:
+            on_error('directory')
+        stack.extend(reversed(folders))
+
+
+class NameSearchSnapshot:
+    """One short-lived directory scan, shared by successive filename queries."""
+
+    MAX_ENTRIES = 100_000
+    MAX_AGE = 20
+
+    def __init__(self, key):
+        self.key = key
+        self._entries = []
+        self._source = walk_entries(*key)
+        self._lock = threading.Lock()
+        self._finished = None
+        self._overflow = False
+
+    def reusable(self, key):
+        return (self.key == key and not self._overflow
+                and (self._finished is None
+                     or time.monotonic() - self._finished < self.MAX_AGE))
+
+    def entries(self, cancelled):
+        # A superseded query releases the iterator for the next one without
+        # losing its position, including when scandir is still in a large folder.
+        with self._lock:
+            if cancelled():
+                return
+            if self._overflow:
+                with closing(walk_entries(*self.key)) as source:
+                    yield from source
+                return
+            for item in self._entries:
+                if cancelled():
+                    return
+                yield item
+            while not cancelled():
+                item = next(self._source, None)
+                if item is None:
+                    if self._finished is None:
+                        self._finished = time.monotonic()
+                    return
+                if len(self._entries) < self.MAX_ENTRIES:
+                    self._entries.append(item)
+                else:
+                    self._overflow = True
+                    self._entries.clear()
+                    with closing(self._source) as source:
+                        while item is not None and not cancelled():
+                            yield item
+                            if cancelled():
+                                return
+                            item = next(source, None)
+                    return
+                if not cancelled():
+                    yield item
 
 
 class UpdateSignals(QObject):
@@ -487,6 +583,9 @@ class FileSearchWindow(QMainWindow):
         self.entry_filter = 'all'
         self.skip_dirs = True
         self.is_searching = False
+        self._cancel_search_event = None
+        self._name_snapshot = None
+        self._content_skips = {}
         self._search_pending = False  # 回车与历史项 activated 同时触发时合并为一次搜索
         self.search_generation = 0  # 递增代数：旧搜索线程的残留信号按代数丢弃
         self._load_config()
@@ -537,6 +636,8 @@ class FileSearchWindow(QMainWindow):
         ef = cfg.get('entry_filter', 'all')
         self.entry_filter = ef if ef in ('all', 'files', 'folders') else 'all'
         self.skip_dirs = bool(cfg.get('skip_common_dirs', True))
+        extension_filter = cfg.get('extension_filter', '')
+        self.extension_filter_text = extension_filter if isinstance(extension_filter, str) else ''
 
     def _save_config(self):
         try:
@@ -548,6 +649,7 @@ class FileSearchWindow(QMainWindow):
                 'whole_word': self.whole_word_check.isChecked(),
                 'entry_filter': self._entry_filter_value(),
                 'skip_common_dirs': self.skip_dirs_check.isChecked(),
+                'extension_filter': self.extension_edit.text(),
                 'font_size': self.font_size,
                 'language': self.language,
             }
@@ -595,6 +697,7 @@ class FileSearchWindow(QMainWindow):
         self.folder_combo.addItems(self.folder_history)
         self.folder_combo.setCurrentText(self.last_folder)
         self.folder_combo.lineEdit().returnPressed.connect(self.request_search)
+        self.folder_combo.lineEdit().textEdited.connect(self._live_timer_start)
         self.folder_combo.textActivated.connect(self._on_folder_activated)
         self.folder_combo.down_pressed.connect(self.focus_results)
         self.folder_combo.remove_requested.connect(
@@ -627,6 +730,14 @@ class FileSearchWindow(QMainWindow):
         self.hint_label = QLabel(objectName="hint")
         self.hint_label.setWordWrap(True)
         grid.addWidget(self.hint_label, 2, 1, 1, 2)
+        self.extension_label = QLabel()
+        self.extension_edit = QLineEdit(self.extension_filter_text, objectName="extensionFilter")
+        self.extension_edit.setClearButtonEnabled(True)
+        self.extension_label.setBuddy(self.extension_edit)
+        self.extension_edit.textChanged.connect(self._live_timer_start)
+        self.extension_edit.returnPressed.connect(self.request_search)
+        grid.addWidget(self.extension_label, 3, 0, Qt.AlignRight)
+        grid.addWidget(self.extension_edit, 3, 1)
 
         # 选项分两行：挤在一行时窗口稍窄标签就被截断（“By Conte”“Folders O”）
         opts = QHBoxLayout()
@@ -684,6 +795,10 @@ class FileSearchWindow(QMainWindow):
         # 结果区
         self.result_label = QLabel()
         outer.addWidget(self.result_label)
+        self.skipped_label = QLabel(objectName="hint")
+        self.skipped_label.setWordWrap(True)
+        self.skipped_label.hide()
+        outer.addWidget(self.skipped_label)
 
         self.results_model = ResultsModel(self)
         self.table = ResultsTable()
@@ -716,6 +831,14 @@ class FileSearchWindow(QMainWindow):
         self.table.setDragEnabled(True)
         self.table.setDragDropMode(QAbstractItemView.DragOnly)
         outer.addWidget(self.table, 1)
+        self.excerpt_label = QLabel(objectName="hint")
+        self.excerpt_label.setTextFormat(Qt.PlainText)
+        self.excerpt_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.excerpt_label.setWordWrap(True)
+        self.excerpt_label.hide()
+        outer.addWidget(self.excerpt_label)
+        self.table.selectionModel().selectionChanged.connect(self._update_excerpt)
+        self.results_model.modelReset.connect(self._update_excerpt)
 
         # 按文件名搜索时边输入边搜索（防抖）；搜索选项变化时也按新条件刷新
         self._live_timer = QTimer(self, singleShot=True, interval=300)
@@ -870,6 +993,9 @@ class FileSearchWindow(QMainWindow):
         mod = "⌘" if sys.platform == "darwin" else "Ctrl"
         extra = t('hint_quicklook') if sys.platform == "darwin" else ""
         self.hint_label.setText(t('hint_qt', mod=mod, extra=extra))
+        self.extension_label.setText(t('extension_filter'))
+        self.extension_edit.setPlaceholderText(t('extension_placeholder'))
+        self.extension_edit.setToolTip(t('extension_tip'))
         self.name_radio.setText(t('by_name'))
         self.content_radio.setText(t('by_content'))
         self.all_radio.setText(t('match_all'))
@@ -884,6 +1010,8 @@ class FileSearchWindow(QMainWindow):
             t('skip_dirs_tip', dirs=", ".join(sorted(SKIP_DIR_NAMES, key=str.lower))))
         self.compact_check.setText(t('compact'))
         self._update_result_label()
+        self._update_skipped_label()
+        self._update_excerpt()
         self.font_label.setText(t('font'))
         self.results_model.set_headers(
             [t('col_name'), t('col_path'), t('col_size'), t('col_date')])
@@ -951,6 +1079,8 @@ class FileSearchWindow(QMainWindow):
             self.folder_history = self._remember(self.folder_history, folder)
             self._refresh_combo(self.folder_combo, self.folder_history, folder)
             self._save_config()
+            if self.search_combo.currentText().strip():
+                self._live_timer_start()
 
     def _forget(self, combo, history, value):
         """从历史中删除一项；输入框里当前的文字保持不变"""
@@ -966,77 +1096,116 @@ class FileSearchWindow(QMainWindow):
         combo.setCurrentText(current)
         combo.blockSignals(False)
 
-    # ---------- 搜索（逻辑移植自 Tk 版） ----------
+    # ---------- 搜索 ----------
 
     @staticmethod
     def parse_search_terms(search_text):
         return [term.strip() for term in search_text.split() if term.strip()]
 
     @staticmethod
-    def word_pattern(kw_lower):
-        """全词匹配的正则：关键词的字母/数字端不得与相邻字母/数字连成一体。
-        仅约束 ASCII 字母数字端（中文等 CJK 词天然无分隔符，不加约束），
-        因此 a3 匹配 zhiyuan_a3_video / 智元a3，但不匹配 e183a375。"""
-        pre = r'(?<![a-z0-9])' if re.match(r'[a-z0-9]', kw_lower) else ''
-        post = r'(?![a-z0-9])' if re.search(r'[a-z0-9]$', kw_lower) else ''
-        return pre + re.escape(kw_lower) + post
-
-    @classmethod
-    def keyword_in(cls, kw, text_lower, whole_word, at_text_end_ok=True):
-        """text_lower 中是否命中 kw。at_text_end_ok=False 时不信任恰好贴着文本
-        末尾结束的命中（分块读取时看不到下一个字符，无法判定词边界）。"""
+    def search_patterns(terms, whole_word):
         if not whole_word:
-            return kw in text_lower
-        for m in re.finditer(cls.word_pattern(kw), text_lower):
-            if at_text_end_ok or m.end() < len(text_lower):
-                return True
-        return False
+            return terms
+        patterns = []
+        for term in terms:
+            # Only ASCII letters/digits form word boundaries, so e.g. 智元a3
+            # matches a3 but e183a375 does not.
+            left = r'(?<![a-z0-9])' if re.match(r'[a-z0-9]', term) else ''
+            right = r'(?![a-z0-9])' if re.search(r'[a-z0-9]$', term) else ''
+            patterns.append(re.compile(left + re.escape(term) + right))
+        return patterns
+
+    @staticmethod
+    def parse_extensions(text):
+        extensions = set()
+        for token in re.split(r'[\s,，;；]+', text.lower()):
+            suffix = token.removeprefix('*').lstrip('.')
+            if suffix:
+                extensions.add('.' + suffix)
+        return tuple(sorted(extensions))
+
+    @staticmethod
+    def _make_excerpt(text, folded, span, clipped, at_eof):
+        start, end = span
+        if len(text) != len(folded):
+            # A lowercase character can expand, e.g. İ becomes i + combining dot.
+            offset = 0
+            original_start = None
+            for index, char in enumerate(text):
+                offset += len(char.lower())
+                if original_start is None and offset > start:
+                    original_start = index
+                if offset >= end:
+                    start, end = original_start, index + 1
+                    break
+        left = max(0, start - 55)
+        right = min(len(text), end + 55)
+        before = ('…' if left or clipped else '') + text[left:start]
+        word = text[start:end]
+        if len(word) > 120:
+            word = word[:119] + '…'
+        after = text[end:right] + ('…' if right < len(text) or not at_eof else '')
+        return ' '.join((before + word + after).split())
 
     @classmethod
-    def match_keywords(cls, text, keywords_lower, match_mode, whole_word=False):
-        text_lower = text.lower()
-        if match_mode == "all":
-            return all(cls.keyword_in(kw, text_lower, whole_word) for kw in keywords_lower)
-        return any(cls.keyword_in(kw, text_lower, whole_word) for kw in keywords_lower)
-
-    @classmethod
-    def content_matches(cls, path, keywords_lower, match_mode, file_size=None,
-                        chunk_size=4 * 1024 * 1024, whole_word=False):
-        # 开头 8KB 含 NUL 字节即视为二进制文件（与 grep 的判定一致）：
-        # 二进制文件按 UTF-8 忽略错误解码既慢又容易出现无意义的误命中
+    def scan_content(cls, path, patterns, match_mode, overlap, whole_word,
+                     cancelled, chunk_size=256 * 1024):
+        """Return a matching excerpt or the reason a file was skipped."""
         try:
-            with open(path, 'rb') as f:
-                head = f.read(8192)
-                if b'\0' in head:
-                    return False
-                if file_size is not None and file_size <= chunk_size:
-                    text = (head + f.read()).decode('utf-8', errors='ignore')
-                    return cls.match_keywords(text, keywords_lower, match_mode, whole_word)
-        except Exception:
-            return False
-        found = [False] * len(keywords_lower)
-        # 全词模式 tail 多留一个字符，保证跨块命中重扫时能看到前一个字符判定词边界
-        overlap = max(len(kw) for kw in keywords_lower) + (1 if whole_word else -1)
-        tail = ""
-        try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                chunk = f.read(chunk_size)
-                while chunk:
-                    next_chunk = f.read(chunk_size)
-                    at_eof = not next_chunk
-                    text = (tail + chunk).lower()
-                    for i, kw in enumerate(keywords_lower):
-                        if not found[i] and cls.keyword_in(kw, text, whole_word, at_eof):
-                            if match_mode != "all":
-                                return True
-                            found[i] = True
-                    if match_mode == "all" and all(found):
-                        return True
-                    tail = text[-overlap:] if overlap > 0 else ""
-                    chunk = next_chunk
-        except Exception:
-            return False
-        return match_mode == "all" and all(found)
+            with open(path, 'rb') as raw:
+                if cancelled():
+                    return None, None
+                head = raw.read(8192)
+                if head.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+                    encoding = 'utf-32'
+                elif head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+                    encoding = 'utf-16'
+                elif b'\0' in head:
+                    return None, 'binary'
+                else:
+                    encoding = 'utf-8-sig'
+                raw.seek(0)
+                with io.TextIOWrapper(raw, encoding=encoding, errors='replace') as stream:
+                    tail = ''
+                    clipped = False
+                    remaining = patterns
+                    excerpt = None
+                    while not cancelled():
+                        chunk = stream.read(chunk_size)
+                        if cancelled():
+                            break
+                        at_eof = len(chunk) < chunk_size
+                        text = tail + chunk
+                        folded = text.lower()
+                        misses = []
+                        matches = []
+                        for pattern in remaining:
+                            # An overlap window may begin in the middle of a
+                            # word. Its first character has no known left neighbor.
+                            if whole_word:
+                                match = pattern.search(folded, int(clipped))
+                                if match and (at_eof or match.end() < len(folded)):
+                                    matches.append(match.span())
+                                    continue
+                            else:
+                                start = folded.find(pattern)
+                                if start >= 0:
+                                    matches.append((start, start + len(pattern)))
+                                    continue
+                            misses.append(pattern)
+                        if matches and excerpt is None:
+                            excerpt = cls._make_excerpt(
+                                text, folded, min(matches), clipped, at_eof)
+                        if matches and (match_mode == 'any' or not misses):
+                            return excerpt, None
+                        if at_eof:
+                            break
+                        remaining = misses
+                        clipped = len(text) > overlap
+                        tail = text[-overlap:]
+        except OSError:
+            return None, 'read'
+        return None, None
 
     def request_search(self, *_):
         """回车 / 选中历史项：立即按当前关键词搜索。编辑框回车时 QComboBox 若在历史里
@@ -1065,37 +1234,42 @@ class FileSearchWindow(QMainWindow):
         self._live_timer.start()
 
     def _on_option_changed(self, *_):
-        # 选项变化后，若已有关键词则按新条件刷新（按内容搜索较慢，仍需手动回车）
         if self.search_combo.currentText().strip():
-            self._live_timer.start()
+            self._live_timer_start()
+
+    def _clear_results(self):
+        self.results_model.clear()
+        self._content_skips = {}
+        self._update_result_label()
+        self._update_skipped_label()
+
+    def _reset_search(self):
+        self._stop_current_search()
+        self._name_snapshot = None
+        self._clear_results()
+        self.table.setSortingEnabled(True)
 
     def _live_search(self):
-        """边输入边搜索：仅按文件名模式（按内容太重）。不写入历史，
-        不弹对话框；关键词清空时清掉结果"""
-        if not self.name_radio.isChecked():
+        keywords = self.parse_search_terms(self.search_combo.currentText())
+        if not keywords or self.content_radio.isChecked():
+            self._reset_search()
+            self.status_label.setText(self.t('content_press_enter' if keywords else 'ready'))
             return
-        if not self.parse_search_terms(self.search_combo.currentText()):
-            self._stop_current_search()
-            self.results_model.clear()
-            self._update_result_label()
-            self.status_label.setText(self.t('ready'))
-            return
-        if os.path.isdir(self.folder_combo.currentText().strip()):
-            self._start_search(record=False)
+        self._start_search(record=False)
 
     def _start_search(self, record):
-        """开始一次新搜索（进行中的旧搜索直接作废）。record=True 为用户显式搜索：
-        校验失败给出提示并写入历史；边输入边搜索时 record=False，静默进行"""
         search_path = self.folder_combo.currentText().strip()
         search_text = self.search_combo.currentText()
         keywords = self.parse_search_terms(search_text)
         if not os.path.isdir(search_path):
+            self._reset_search()
+            self.status_label.setText(self.t('invalid_folder', path=search_path))
             if record:
-                self.status_label.setText(self.t('invalid_folder', path=search_path))
                 self.folder_combo.setFocus()
                 self.folder_combo.lineEdit().selectAll()
             return
         if not keywords:
+            self._reset_search()
             if record:
                 self.status_label.setText(self.t('enter_keywords'))
                 self.focus_search()
@@ -1110,23 +1284,33 @@ class FileSearchWindow(QMainWindow):
 
         self._stop_current_search()
         self.table.setSortingEnabled(False)
-        self.results_model.clear()
-        self._update_result_label()
+        self._clear_results()
         self.is_searching = True
         self.search_generation += 1
         self.search_button.setText(self.t('cancel'))
         self.status_label.setText(self.t('searching', keywords=', '.join(keywords)))
 
-        search_type = "name" if self.name_radio.isChecked() else "content"
-        match_mode = "all" if self.all_radio.isChecked() else "any"
-        thread = threading.Thread(
+        search_type = 'name' if self.name_radio.isChecked() else 'content'
+        match_mode = 'all' if self.all_radio.isChecked() else 'any'
+        skip_dirs = self.skip_dirs_check.isChecked()
+        if not os.path.isabs(search_path):
+            search_path = os.path.join(os.getcwd(), search_path)
+        scan_key = (search_path, skip_dirs)
+        if search_type == 'name':
+            if record or not self._name_snapshot or not self._name_snapshot.reusable(scan_key):
+                self._name_snapshot = NameSearchSnapshot(scan_key)
+        else:
+            self._name_snapshot = None
+
+        self._cancel_search_event = threading.Event()
+        threading.Thread(
             target=self._search_worker,
-            args=(self.search_generation, search_path,
-                  [kw.lower() for kw in keywords], search_type, match_mode,
+            args=(self.search_generation, scan_key, keywords, search_type, match_mode,
                   self.whole_word_check.isChecked(), self._entry_filter_value(),
-                  self.skip_dirs_check.isChecked()),
-            daemon=True)
-        thread.start()
+                  self.parse_extensions(self.extension_edit.text()), self._name_snapshot,
+                  self._cancel_search_event.is_set, self.t('folder_size')),
+            daemon=True,
+        ).start()
 
     def _entry_filter_value(self):
         if self.entry_files_radio.isChecked():
@@ -1136,108 +1320,101 @@ class FileSearchWindow(QMainWindow):
         return 'all'
 
     def _stop_current_search(self):
-        """作废进行中的搜索：已排队但尚未送达的结果批次按代数丢弃"""
+        """Cancel the worker and invalidate its queued Qt signals."""
         if self.is_searching:
+            if self._cancel_search_event is not None:
+                self._cancel_search_event.set()
             self.is_searching = False
             self.search_generation += 1
             self.search_button.setText(self.t('search'))
-            self.table.setSortingEnabled(True)
 
     def cancel_search(self):
+        self._live_timer.stop()
         if self.is_searching:
             self._stop_current_search()
+            self._name_snapshot = None
+            self.table.setSortingEnabled(True)
             self.status_label.setText(self.t('search_cancelled'))
 
-    def _search_worker(self, generation, search_path, keywords_lower,
-                       search_type, match_mode, whole_word, entry_filter, skip_dirs):
-        def active():
-            return self.is_searching and self.search_generation == generation
-
+    def _search_worker(self, generation, scan_key, keywords, search_type, match_mode,
+                       whole_word, entry_filter, extensions, snapshot, cancelled, folder_label):
         try:
-            started = time.monotonic()
-            count = 0
-            scanned = 0
+            started = last_update = time.monotonic()
+            count = scanned = 0
             batch = []
-            batch_size = 200
-            last_update = started
-            update_interval = 0.1
-            folder_label = self.t('folder_size')
+            skipped = Counter()
+            by_name = search_type == 'name'
+            combine = all if match_mode == 'all' else any
+            keywords_lower = [word.lower() for word in keywords]
+            patterns = self.search_patterns(keywords_lower, whole_word)
+            overlap = max(72, max(map(len, keywords_lower)) + 1)
 
-            def make_row(entry, st, is_folder):
-                mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                parent = os.path.dirname(entry.path)
-                if is_folder:
-                    return (f"📁 {entry.name}", parent, entry.path,
-                            folder_label, -1, mtime, True)
-                return (entry.name, parent, entry.path, format_size(st.st_size),
-                        st.st_size, mtime, False)
+            def note_skip(reason):
+                skipped[reason] += 1
 
-            def flush():
-                nonlocal batch
-                if batch:
-                    rows, batch = batch, []
-                    self.signals.batch.emit(generation, rows)
+            def name_matches(name):
+                name = name.lower()
+                if whole_word:
+                    return combine(pattern.search(name) for pattern in patterns)
+                return combine(word in name for word in patterns)
 
-            # 显式栈代替递归：目录层级很深时递归会触发 RecursionError 导致搜索中断。
-            # 子目录逆序入栈，保持「先当前目录的文件，再逐个子目录」的深度优先顺序
-            stack = [search_path]
-            while stack:
-                if not active():
-                    return
-                path = stack.pop()
-                try:
-                    with os.scandir(path) as it:
-                        entries = list(it)
-                except OSError:
-                    continue
-                dirs = []
-                for entry in entries:
-                    if not active():
-                        return
+            source = snapshot.entries(cancelled) if by_name else walk_entries(*scan_key, note_skip)
+            with closing(source):
+                while not cancelled():
+                    item = next(source, None)
+                    if item is None or cancelled():
+                        break
+                    entry, is_folder = item
                     scanned += 1
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            if (entry_filter != 'files'
-                                    and search_type == "name"
-                                    and self.match_keywords(
-                                        entry.name, keywords_lower, match_mode, whole_word)):
-                                batch.append(make_row(
-                                    entry, entry.stat(follow_symlinks=False), True))
-                                count += 1
-                            if not (skip_dirs and entry.name in SKIP_DIR_NAMES):
-                                dirs.append(entry.path)
-                        elif entry_filter != 'folders' and entry.is_file(follow_symlinks=False):
-                            if search_type == "name":
-                                if self.match_keywords(entry.name, keywords_lower,
-                                                       match_mode, whole_word):
-                                    batch.append(make_row(
-                                        entry, entry.stat(follow_symlinks=False), False))
+                    if is_folder:
+                        eligible = by_name and entry_filter != 'files' and not extensions
+                    elif is_folder is False:
+                        eligible = entry_filter != 'folders' and (
+                            not extensions or entry.name.lower().endswith(extensions))
+                    else:
+                        eligible = False
+                    if eligible and (not by_name or name_matches(entry.name)):
+                        try:
+                            if not by_name and os.path.splitext(entry.name)[1].lower() in BINARY_EXTS:
+                                skipped['format'] += 1
+                            else:
+                                st = os.stat(entry.path, follow_symlinks=False)
+                                excerpt = None
+                                if not by_name and st.st_size > 100 * 1024 * 1024:
+                                    skipped['large'] += 1
+                                elif not by_name and stat.S_ISREG(st.st_mode):
+                                    excerpt, reason = self.scan_content(
+                                        entry.path, patterns, match_mode, overlap, whole_word, cancelled)
+                                    if reason:
+                                        skipped[reason] += 1
+                                valid_name = by_name and (
+                                    stat.S_ISDIR(st.st_mode) if is_folder else stat.S_ISREG(st.st_mode))
+                                if valid_name or excerpt:
+                                    mtime = datetime.datetime.fromtimestamp(st.st_mtime)
+                                    label = f"📁 {entry.name}" if is_folder else entry.name
+                                    size = folder_label if is_folder else format_size(st.st_size)
+                                    batch.append((label, os.path.dirname(entry.path), entry.path, size,
+                                                  -1 if is_folder else st.st_size,
+                                                  mtime.strftime('%Y-%m-%d %H:%M:%S'), is_folder, excerpt))
                                     count += 1
-                            elif os.path.splitext(entry.name)[1].lower() not in BINARY_EXTS:
-                                st = entry.stat(follow_symlinks=False)
-                                if st.st_size <= 100 * 1024 * 1024 and self.content_matches(
-                                        entry.path, keywords_lower, match_mode, st.st_size,
-                                        whole_word=whole_word):
-                                    batch.append(make_row(entry, st, False))
-                                    count += 1
-                    except OSError:
-                        pass
+                        except OSError:
+                            if not by_name:
+                                skipped['read'] += 1
                     now = time.monotonic()
-                    if len(batch) >= batch_size or (now - last_update) > update_interval:
-                        flush()
-                        last_update = now
+                    if (count == 1 and batch) or len(batch) >= 200 or now - last_update > 0.1:
+                        if batch:
+                            self.signals.batch.emit(generation, batch)
+                            batch = []
                         self.signals.progress.emit(generation, count, scanned)
-                stack.extend(reversed(dirs))
-
-            flush()
-            if active():
+                        last_update = now
+            if not cancelled():
+                if batch:
+                    self.signals.batch.emit(generation, batch)
                 self.signals.done.emit(generation, count, match_mode, scanned,
-                                       time.monotonic() - started)
+                                       time.monotonic() - started, dict(skipped))
         except Exception as e:
-            self.signals.error.emit(generation, str(e))
-        finally:
-            if self.search_generation == generation:
-                self.is_searching = False
+            if not cancelled():
+                self.signals.error.emit(generation, str(e))
 
     # ---------- 搜索结果（界面线程） ----------
 
@@ -1245,6 +1422,25 @@ class FileSearchWindow(QMainWindow):
         n = self.results_model.rowCount()
         self.result_label.setText(
             self.t('results_count', count=n) if n else self.t('results'))
+
+    def _update_skipped_label(self):
+        skipped = self._content_skips
+        reasons = [self.t('skipped_' + reason, count=skipped[reason])
+                   for reason in ('format', 'large', 'binary', 'read') if skipped.get(reason)]
+        parts = []
+        if reasons:
+            total = sum(skipped[reason] for reason in skipped if reason != 'directory')
+            parts.append(self.t('skipped_files', total=total, reasons=' · '.join(reasons)))
+        if skipped.get('directory'):
+            parts.append(self.t('skipped_directory', count=skipped['directory']))
+        self.skipped_label.setText(' · '.join(parts))
+        self.skipped_label.setVisible(bool(parts))
+
+    def _update_excerpt(self, *_):
+        indexes = self.table.selectionModel().selectedRows()
+        excerpt = self.results_model.excerpt_at(indexes[0].row()) if len(indexes) == 1 else ''
+        self.excerpt_label.setText(self.t('match_excerpt', text=excerpt) if excerpt else '')
+        self.excerpt_label.setVisible(bool(excerpt))
 
     def _add_batch(self, generation, rows):
         if generation != self.search_generation:
@@ -1258,9 +1454,13 @@ class FileSearchWindow(QMainWindow):
         self.status_label.setText(
             self.t('searching_progress_detail', count=count, scanned=scanned))
 
-    def _on_done(self, generation, count, match_mode, scanned, elapsed):
+    def _on_done(self, generation, count, match_mode, scanned, elapsed, skipped):
         if generation != self.search_generation:
             return
+        self.is_searching = False
+        self._cancel_search_event = None
+        self._content_skips = skipped
+        self._update_skipped_label()
         mode_text = self.t('mode_all') if match_mode == "all" else self.t('mode_any')
         self.status_label.setText(self.t(
             'search_done_detail', count=count, mode=mode_text,
@@ -1271,11 +1471,14 @@ class FileSearchWindow(QMainWindow):
     def _on_error(self, generation, message):
         if generation != self.search_generation:
             return
+        self.is_searching = False
+        self._cancel_search_event = None
+        self._name_snapshot = None
         self.status_label.setText(self.t('search_error_status', error=message))
-        QMessageBox.critical(self, self.t('error'),
-                             self.t('search_error_msg', error=message))
         self.search_button.setText(self.t('search'))
         self.table.setSortingEnabled(True)
+        QMessageBox.critical(self, self.t('error'),
+                             self.t('search_error_msg', error=message))
 
     # ---------- 焦点 / 键盘 / 拖放 ----------
 
@@ -1532,6 +1735,7 @@ rm -f "{deb_path}" "$0"
         # 作废所有已排队的搜索信号，防止删除后旧批次又把条目加回来。
         self._stop_current_search()
         self.search_generation += 1
+        self._name_snapshot = None
         removed = set()
         removed_dirs = []
         errors = []
@@ -1566,6 +1770,7 @@ rm -f "{deb_path}" "$0"
             model.rows = [row for row in model.rows if not covered(normalized(row[2]))]
             model.endResetModel()
         self._update_result_label()
+        self.table.setSortingEnabled(True)
         count = sum(covered(normalized(path)) for path in paths)
         self.status_label.setText(self.t('delete_done', count=count, failed=len(errors)))
         if errors:
@@ -1651,7 +1856,8 @@ rm -f "{deb_path}" "$0"
             event.ignore()
             self.showMinimized()
             return
-        self.is_searching = False
+        self._stop_current_search()
+        self._name_snapshot = None
         event.accept()
 
 

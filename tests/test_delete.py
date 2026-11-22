@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-from PySide6.QtCore import QFile, QTimer
+from PySide6.QtCore import QFile, QItemSelectionModel, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from FileSearchQt import FileSearchWindow, ResultsModel
@@ -26,6 +26,7 @@ class DeleteTests(unittest.TestCase):
         w = self.window
         w.language = 'zh'
         w.is_searching = False
+        w._cancel_search_event = None
         w.search_generation = 1
         w._live_timer = QTimer(w)
         w.results_model = ResultsModel(w)
@@ -121,6 +122,21 @@ class DeleteTests(unittest.TestCase):
         w._add_batch(old_generation, old_rows)
         self.assertFalse(w.is_searching)
         self.assertEqual(self.remaining(), [])
+
+    def test_enabling_sorting_preserves_paths_selected_during_search(self):
+        paths = [self.root / name for name in ('c.txt', 'a.txt', 'b.txt')]
+        self.populate(paths)
+        w = self.window
+        w.table.horizontalHeader().setSortIndicator(0, Qt.AscendingOrder)
+        selection = w.table.selectionModel()
+        for row in (0, 2):
+            selection.select(w.results_model.index(row, 0),
+                             QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        selection.setCurrentIndex(w.results_model.index(2, 0), QItemSelectionModel.NoUpdate)
+        w.table.setSortingEnabled(True)
+        self.assertEqual(self.remaining(), sorted(paths))
+        self.assertEqual(set(w._selected_paths()), {str(paths[0]), str(paths[2])})
+        self.assertEqual(w.results_model.path_at(selection.currentIndex().row()), str(paths[2]))
 
 
 if __name__ == '__main__':
